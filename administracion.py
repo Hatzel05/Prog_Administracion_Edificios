@@ -1,30 +1,175 @@
+import json
+import os
 import tkinter as tk
 from tkinter import ttk, messagebox
-from datetime import date
+from datetime import date, datetime
 
 
-class AdministracionEdificio:
+ARCHIVO_DATOS  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gastos.json")
+ARCHIVO_PAGOS  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pagos.json")
+
+
+class AdministracionApp:
+    """Controlador principal: gestiona la ventana y la navegación entre pantallas."""
+
+    TAMANIOS = {
+        "MenuPrincipal":  "400x450",
+        "RegistroGastos": "620x580",
+        "VistaRegistros": "680x490",
+        "RegistroPagos":  "600x580",
+        "VistaPagos":     "680x490",
+    }
+
     def __init__(self, root):
         self.root = root
         self.root.title("Administración del Edificio")
-        self.root.geometry("620x520")
         self.root.resizable(False, False)
 
-        self.gastos = []
-        self.fecha_desbloqueada = False
+        container = tk.Frame(root)
+        container.pack(fill="both", expand=True)
+        container.grid_rowconfigure(0, weight=1)
+        container.grid_columnconfigure(0, weight=1)
 
+        self.frames = {}
+        for FrameClass in (MenuPrincipal, RegistroGastos, VistaRegistros,
+                           RegistroPagos, VistaPagos):
+            frame = FrameClass(container, self)
+            self.frames[FrameClass.__name__] = frame
+            frame.grid(row=0, column=0, sticky="nsew")
+
+        self.show_frame("MenuPrincipal")
+
+    def show_frame(self, name):
+        self.root.geometry(self.TAMANIOS[name])
+        self.frames[name].tkraise()
+        if name in ("VistaRegistros", "VistaPagos"):
+            self.frames[name].cargar_datos()
+        elif name == "RegistroPagos":
+            self.frames[name].actualizar_cuota_sugerida()
+
+
+# ---------------------------------------------------------------------------
+# Pantalla: Menú principal
+# ---------------------------------------------------------------------------
+
+class MenuPrincipal(tk.Frame):
+    def __init__(self, parent, controller):
+        super().__init__(parent, bg="#F5F5F5")
+        self.controller = controller
         self._construir_ui()
 
     def _construir_ui(self):
-        # --- Encabezado ---
+        tk.Frame(self, bg="#F5F5F5", height=36).pack()
+
         tk.Label(
-            self.root,
+            self,
+            text="Administración del Edificio",
+            font=("Arial", 18, "bold"),
+            bg="#F5F5F5",
+            fg="#1A237E",
+        ).pack(pady=(0, 6))
+
+        tk.Label(
+            self,
+            text="Selecciona una opción",
+            font=("Arial", 11),
+            bg="#F5F5F5",
+            fg="#777777",
+        ).pack(pady=(0, 28))
+
+        tk.Button(
+            self,
             text="Registro de Gastos",
-            font=("Arial", 16, "bold"),
-        ).pack(pady=(16, 8))
+            command=lambda: self.controller.show_frame("RegistroGastos"),
+            font=("Arial", 12, "bold"),
+            bg="#2E7D32",
+            fg="white",
+            activebackground="#1B5E20",
+            activeforeground="white",
+            width=26,
+            height=2,
+            cursor="hand2",
+            relief="flat",
+        ).pack(pady=8)
+
+        tk.Button(
+            self,
+            text="Ver Registros de Gastos",
+            command=lambda: self.controller.show_frame("VistaRegistros"),
+            font=("Arial", 12, "bold"),
+            bg="#1565C0",
+            fg="white",
+            activebackground="#0D47A1",
+            activeforeground="white",
+            width=26,
+            height=2,
+            cursor="hand2",
+            relief="flat",
+        ).pack(pady=8)
+
+        tk.Button(
+            self,
+            text="Registro de Pagos",
+            command=lambda: self.controller.show_frame("RegistroPagos"),
+            font=("Arial", 12, "bold"),
+            bg="#6A1B9A",
+            fg="white",
+            activebackground="#4A148C",
+            activeforeground="white",
+            width=26,
+            height=2,
+            cursor="hand2",
+            relief="flat",
+        ).pack(pady=8)
+
+        tk.Button(
+            self,
+            text="Ver Pagos Guardados",
+            command=lambda: self.controller.show_frame("VistaPagos"),
+            font=("Arial", 12, "bold"),
+            bg="#00695C",
+            fg="white",
+            activebackground="#004D40",
+            activeforeground="white",
+            width=26,
+            height=2,
+            cursor="hand2",
+            relief="flat",
+        ).pack(pady=8)
+
+
+# ---------------------------------------------------------------------------
+# Pantalla: Registro de gastos
+# ---------------------------------------------------------------------------
+
+class RegistroGastos(tk.Frame):
+    def __init__(self, parent, controller):
+        super().__init__(parent)
+        self.controller = controller
+        self.gastos = []
+        self._construir_ui()
+
+    def _construir_ui(self):
+        # --- Barra superior ---
+        topbar = tk.Frame(self, pady=4)
+        topbar.pack(fill="x", padx=8)
+        tk.Button(
+            topbar,
+            text="← Volver",
+            command=lambda: self.controller.show_frame("MenuPrincipal"),
+            font=("Arial", 9),
+            relief="flat",
+            cursor="hand2",
+            fg="#1565C0",
+        ).pack(side="left")
+
+        # --- Encabezado ---
+        tk.Label(self, text="Registro de Gastos", font=("Arial", 16, "bold")).pack(
+            pady=(4, 8)
+        )
 
         # --- Formulario ---
-        form = tk.Frame(self.root, padx=24, pady=8)
+        form = tk.Frame(self, padx=24, pady=8)
         form.pack(fill="x")
 
         CONCEPTOS = [
@@ -59,19 +204,7 @@ class AdministracionEdificio:
         tk.Label(form, text="Fecha:", font=("Arial", 11), width=10, anchor="w").grid(
             row=2, column=0, pady=6, sticky="w"
         )
-        self.fecha_entry = tk.Entry(form, font=("Arial", 11), width=28)
-        self.fecha_entry.insert(0, date.today().strftime("%d/%m/%Y"))
-        self.fecha_entry.config(state="readonly")
-        self.fecha_entry.grid(row=2, column=1, padx=10, pady=6, sticky="w")
-        self.fecha_btn = tk.Button(
-            form,
-            text="Editar",
-            command=self._toggle_fecha,
-            font=("Arial", 9),
-            width=7,
-            cursor="hand2",
-        )
-        self.fecha_btn.grid(row=2, column=2, padx=(0, 10), pady=6)
+        self.fecha_entry, self.fecha_btn = self._crear_campo_fecha(form, 2)
 
         tk.Label(form, text="Monto ($):", font=("Arial", 11), width=10, anchor="w").grid(
             row=3, column=0, pady=6, sticky="w"
@@ -93,10 +226,10 @@ class AdministracionEdificio:
         ).grid(row=4, column=1, pady=10, sticky="e")
 
         # --- Separador ---
-        ttk.Separator(self.root, orient="horizontal").pack(fill="x", padx=20, pady=4)
+        ttk.Separator(self, orient="horizontal").pack(fill="x", padx=20, pady=4)
 
-        # --- Tabla de gastos ---
-        tabla_frame = tk.Frame(self.root, padx=20)
+        # --- Tabla ---
+        tabla_frame = tk.Frame(self, padx=20)
         tabla_frame.pack(fill="both", expand=True)
 
         tk.Label(tabla_frame, text="Gastos del mes", font=("Arial", 11, "bold")).pack(
@@ -104,7 +237,7 @@ class AdministracionEdificio:
         )
 
         cols = ("fecha", "concepto", "monto")
-        self.tabla = ttk.Treeview(tabla_frame, columns=cols, show="headings", height=10)
+        self.tabla = ttk.Treeview(tabla_frame, columns=cols, show="headings", height=8)
         self.tabla.heading("fecha", text="Fecha")
         self.tabla.heading("concepto", text="Concepto")
         self.tabla.heading("monto", text="Monto")
@@ -113,37 +246,63 @@ class AdministracionEdificio:
         self.tabla.column("monto", width=140, anchor="e")
         self.tabla.pack(fill="both", expand=True)
 
-        # --- Total y cuota por departamento ---
+        # --- Totales ---
         self.total_label = tk.Label(
-            self.root,
-            text="Total:  $0.00",
-            font=("Arial", 12, "bold"),
-            anchor="e",
+            self, text="Total:  $0.00", font=("Arial", 12, "bold"), anchor="e"
         )
         self.total_label.pack(fill="x", padx=24, pady=(12, 2))
 
         self.cuota_label = tk.Label(
-            self.root,
+            self,
             text="Por departamento (÷20):  $0.00",
             font=("Arial", 11),
             anchor="e",
             fg="#555555",
         )
-        self.cuota_label.pack(fill="x", padx=24, pady=(0, 12))
+        self.cuota_label.pack(fill="x", padx=24, pady=(0, 6))
 
-        # Foco inicial
+        tk.Button(
+            self,
+            text="Aceptar",
+            command=self._guardar_registros,
+            font=("Arial", 11, "bold"),
+            bg="#1565C0",
+            fg="white",
+            activebackground="#0D47A1",
+            activeforeground="white",
+            width=14,
+            cursor="hand2",
+        ).pack(anchor="e", padx=24, pady=(0, 14))
+
         self.concepto_combo.focus()
 
-    def _toggle_fecha(self):
-        if self.fecha_desbloqueada:
-            self.fecha_entry.config(state="readonly")
-            self.fecha_btn.config(text="Editar")
-            self.fecha_desbloqueada = False
-        else:
-            self.fecha_entry.config(state="normal")
-            self.fecha_btn.config(text="Bloquear")
-            self.fecha_desbloqueada = True
-            self.fecha_entry.focus()
+    def _crear_campo_fecha(self, parent, row):
+        entry = tk.Entry(parent, font=("Arial", 11), width=28)
+        entry.insert(0, date.today().strftime("%d/%m/%Y"))
+        entry.config(state="readonly")
+        entry.grid(row=row, column=1, padx=10, pady=6, sticky="w")
+
+        def toggle():
+            if str(entry.cget("state")) == "normal":
+                entry.config(state="readonly")
+                btn.config(text="Editar")
+            else:
+                entry.config(state="normal")
+                btn.config(text="Bloquear")
+                entry.focus()
+
+        btn = tk.Button(
+            parent, text="Editar", command=toggle, font=("Arial", 9), width=7, cursor="hand2"
+        )
+        btn.grid(row=row, column=2, padx=(0, 10), pady=6)
+        return entry, btn
+
+    def _resetear_campo_fecha(self, entry, btn):
+        entry.config(state="normal")
+        entry.delete(0, tk.END)
+        entry.insert(0, date.today().strftime("%d/%m/%Y"))
+        entry.config(state="readonly")
+        btn.config(text="Editar")
 
     def _on_concepto_select(self, event=None):
         if self.concepto_var.get() == "Otros":
@@ -155,12 +314,9 @@ class AdministracionEdificio:
 
     def _agregar_gasto(self):
         seleccion = self.concepto_var.get()
-        if seleccion == "Otros":
-            concepto = self.concepto_otro.get().strip()
-        else:
-            concepto = seleccion
+        concepto = self.concepto_otro.get().strip() if seleccion == "Otros" else seleccion
 
-        fecha = self.fecha_entry.get().strip() if self.fecha_desbloqueada else date.today().strftime("%d/%m/%Y")
+        fecha = self.fecha_entry.get().strip()
         monto_str = self.monto_entry.get().strip()
 
         if not concepto:
@@ -193,16 +349,784 @@ class AdministracionEdificio:
         self.concepto_var.set("")
         self.concepto_otro.delete(0, tk.END)
         self.concepto_otro.config(state="disabled")
-        self.fecha_entry.config(state="normal")
-        self.fecha_entry.delete(0, tk.END)
-        self.fecha_entry.insert(0, date.today().strftime("%d/%m/%Y"))
-        self.fecha_entry.config(state="readonly")
-        self.fecha_btn.config(text="Editar")
-        self.fecha_desbloqueada = False
+        self._resetear_campo_fecha(self.fecha_entry, self.fecha_btn)
         self.monto_entry.delete(0, tk.END)
         self.concepto_combo.focus()
 
+    def _guardar_registros(self):
+        if not self.gastos:
+            messagebox.showwarning("Sin datos", "No hay gastos para guardar.")
+            return
 
+        total = sum(g["monto"] for g in self.gastos)
+        registro = {
+            "guardado_en": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+            "gastos": list(self.gastos),
+            "total": total,
+            "cuota_por_depto": total / 20,
+        }
+
+        datos = []
+        if os.path.exists(ARCHIVO_DATOS):
+            with open(ARCHIVO_DATOS, "r", encoding="utf-8") as f:
+                datos = json.load(f)
+
+        datos.append(registro)
+
+        with open(ARCHIVO_DATOS, "w", encoding="utf-8") as f:
+            json.dump(datos, f, ensure_ascii=False, indent=2)
+
+        messagebox.showinfo(
+            "Guardado",
+            f"Registro guardado correctamente.\n"
+            f"{len(self.gastos)} gasto(s)  —  Total: ${total:,.2f}",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Pantalla: Vista de registros guardados
+# ---------------------------------------------------------------------------
+
+class VistaRegistros(tk.Frame):
+    def __init__(self, parent, controller):
+        super().__init__(parent)
+        self.controller = controller
+        self._construir_ui()
+
+    def _construir_ui(self):
+        # --- Barra superior ---
+        topbar = tk.Frame(self, pady=4)
+        topbar.pack(fill="x", padx=8)
+        tk.Button(
+            topbar,
+            text="← Volver",
+            command=lambda: self.controller.show_frame("MenuPrincipal"),
+            font=("Arial", 9),
+            relief="flat",
+            cursor="hand2",
+            fg="#1565C0",
+        ).pack(side="left")
+
+        tk.Label(self, text="Registros guardados", font=("Arial", 13, "bold")).pack(
+            pady=(4, 6)
+        )
+
+        frame = tk.Frame(self)
+        frame.pack(fill="both", expand=True, padx=16, pady=(0, 4))
+
+        cols = ("guardado_en", "n_gastos", "total", "cuota")
+        self.tree = ttk.Treeview(frame, columns=cols, show="headings tree")
+        self.tree.heading("#0", text="")
+        self.tree.column("#0", width=20, stretch=False)
+        self.tree.heading("guardado_en", text="Guardado en")
+        self.tree.heading("n_gastos", text="Gastos")
+        self.tree.heading("total", text="Total")
+        self.tree.heading("cuota", text="Por depto")
+        self.tree.column("guardado_en", width=160, anchor="center")
+        self.tree.column("n_gastos", width=60, anchor="center")
+        self.tree.column("total", width=130, anchor="e")
+        self.tree.column("cuota", width=130, anchor="e")
+
+        sb = ttk.Scrollbar(frame, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=sb.set)
+        self.tree.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y")
+
+        self.tree.tag_configure("sesion", background="#E3F2FD")
+
+        # --- Botones de acción ---
+        btn_frame = tk.Frame(self)
+        btn_frame.pack(fill="x", padx=16, pady=(6, 10))
+
+        tk.Button(
+            btn_frame,
+            text="Editar gasto",
+            command=self._editar_seleccionado,
+            font=("Arial", 10, "bold"),
+            bg="#E65100",
+            fg="white",
+            activebackground="#BF360C",
+            activeforeground="white",
+            width=14,
+            cursor="hand2",
+        ).pack(side="left", padx=(0, 8))
+
+        tk.Button(
+            btn_frame,
+            text="Eliminar",
+            command=self._eliminar_seleccionado,
+            font=("Arial", 10, "bold"),
+            bg="#C62828",
+            fg="white",
+            activebackground="#B71C1C",
+            activeforeground="white",
+            width=14,
+            cursor="hand2",
+        ).pack(side="left")
+
+    # --- Helpers de persistencia ---
+
+    def _leer_datos(self):
+        if not os.path.exists(ARCHIVO_DATOS):
+            return []
+        with open(ARCHIVO_DATOS, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    def _guardar_datos(self, datos):
+        with open(ARCHIVO_DATOS, "w", encoding="utf-8") as f:
+            json.dump(datos, f, ensure_ascii=False, indent=2)
+
+    def _parsear_iid(self, iid):
+        """Devuelve (session_idx, gas_idx) — gas_idx es None si es fila de sesión."""
+        parts = iid.split("_")
+        if len(parts) == 2:          # "ses_N"
+            return int(parts[1]), None
+        return int(parts[1]), int(parts[3])   # "ses_N_gas_M"
+
+    # --- Carga de datos ---
+
+    def cargar_datos(self):
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+
+        datos = self._leer_datos()
+
+        for original_idx in range(len(datos) - 1, -1, -1):
+            reg = datos[original_idx]
+            self.tree.insert(
+                "",
+                "end",
+                iid=f"ses_{original_idx}",
+                text="",
+                values=(
+                    reg["guardado_en"],
+                    len(reg["gastos"]),
+                    f"${reg['total']:,.2f}",
+                    f"${reg['cuota_por_depto']:,.2f}",
+                ),
+                tags=("sesion",),
+            )
+            for gas_idx, g in enumerate(reg["gastos"]):
+                self.tree.insert(
+                    f"ses_{original_idx}",
+                    "end",
+                    iid=f"ses_{original_idx}_gas_{gas_idx}",
+                    values=(g["fecha"], "", f"${g['monto']:,.2f}", g["concepto"]),
+                )
+
+    # --- Acciones ---
+
+    def _eliminar_seleccionado(self):
+        seleccion = self.tree.selection()
+        if not seleccion:
+            messagebox.showwarning("Nada seleccionado", "Selecciona un registro o un gasto para eliminar.")
+            return
+
+        session_idx, gas_idx = self._parsear_iid(seleccion[0])
+        datos = self._leer_datos()
+
+        if gas_idx is None:
+            # Eliminar sesión completa
+            reg = datos[session_idx]
+            if not messagebox.askyesno(
+                "Eliminar registro",
+                f"¿Eliminar el registro del {reg['guardado_en']}?\n"
+                f"Se eliminarán {len(reg['gastos'])} gasto(s).",
+            ):
+                return
+            del datos[session_idx]
+        else:
+            # Eliminar gasto individual
+            g = datos[session_idx]["gastos"][gas_idx]
+            if not messagebox.askyesno(
+                "Eliminar gasto",
+                f"¿Eliminar '{g['concepto']}' (${g['monto']:,.2f})?",
+            ):
+                return
+            del datos[session_idx]["gastos"][gas_idx]
+            if not datos[session_idx]["gastos"]:
+                # Sesión quedó vacía → eliminarla también
+                del datos[session_idx]
+            else:
+                nuevo_total = sum(g["monto"] for g in datos[session_idx]["gastos"])
+                datos[session_idx]["total"] = nuevo_total
+                datos[session_idx]["cuota_por_depto"] = nuevo_total / 20
+
+        self._guardar_datos(datos)
+        self.cargar_datos()
+
+    def _editar_seleccionado(self):
+        seleccion = self.tree.selection()
+        if not seleccion:
+            messagebox.showwarning("Nada seleccionado", "Selecciona un gasto individual para editar.")
+            return
+
+        session_idx, gas_idx = self._parsear_iid(seleccion[0])
+        if gas_idx is None:
+            messagebox.showinfo(
+                "Selecciona un gasto",
+                "Selecciona un gasto individual (fila interna) para editarlo.",
+            )
+            return
+
+        datos = self._leer_datos()
+        self._abrir_dialogo_editar(session_idx, gas_idx, datos[session_idx]["gastos"][gas_idx])
+
+    def _abrir_dialogo_editar(self, session_idx, gas_idx, gasto):
+        dlg = tk.Toplevel(self)
+        dlg.title("Editar gasto")
+        dlg.geometry("360x210")
+        dlg.resizable(False, False)
+        dlg.grab_set()
+
+        form = tk.Frame(dlg, padx=20, pady=16)
+        form.pack(fill="both", expand=True)
+
+        tk.Label(form, text="Fecha:", font=("Arial", 11), width=10, anchor="w").grid(
+            row=0, column=0, pady=7, sticky="w"
+        )
+        fecha_var = tk.Entry(form, font=("Arial", 11), width=20)
+        fecha_var.insert(0, gasto["fecha"])
+        fecha_var.grid(row=0, column=1, pady=7, sticky="w")
+
+        tk.Label(form, text="Concepto:", font=("Arial", 11), width=10, anchor="w").grid(
+            row=1, column=0, pady=7, sticky="w"
+        )
+        concepto_var = tk.Entry(form, font=("Arial", 11), width=20)
+        concepto_var.insert(0, gasto["concepto"])
+        concepto_var.grid(row=1, column=1, pady=7, sticky="w")
+
+        tk.Label(form, text="Monto ($):", font=("Arial", 11), width=10, anchor="w").grid(
+            row=2, column=0, pady=7, sticky="w"
+        )
+        monto_var = tk.Entry(form, font=("Arial", 11), width=20)
+        monto_var.insert(0, str(gasto["monto"]))
+        monto_var.grid(row=2, column=1, pady=7, sticky="w")
+
+        def guardar():
+            nueva_fecha = fecha_var.get().strip()
+            nuevo_concepto = concepto_var.get().strip()
+            nuevo_monto_str = monto_var.get().strip()
+
+            if not nueva_fecha or not nuevo_concepto:
+                messagebox.showerror("Campo requerido", "Fecha y concepto son obligatorios.", parent=dlg)
+                return
+            try:
+                nuevo_monto = float(nuevo_monto_str)
+                if nuevo_monto <= 0:
+                    raise ValueError
+            except ValueError:
+                messagebox.showerror("Monto inválido", "Ingresa un monto decimal positivo.", parent=dlg)
+                return
+
+            datos = self._leer_datos()
+            datos[session_idx]["gastos"][gas_idx] = {
+                "fecha": nueva_fecha,
+                "concepto": nuevo_concepto,
+                "monto": nuevo_monto,
+            }
+            nuevo_total = sum(g["monto"] for g in datos[session_idx]["gastos"])
+            datos[session_idx]["total"] = nuevo_total
+            datos[session_idx]["cuota_por_depto"] = nuevo_total / 20
+            self._guardar_datos(datos)
+            dlg.destroy()
+            self.cargar_datos()
+
+        btn_frame = tk.Frame(dlg)
+        btn_frame.pack(fill="x", padx=20, pady=(0, 14))
+        tk.Button(
+            btn_frame, text="Guardar", command=guardar,
+            font=("Arial", 10, "bold"), bg="#2E7D32", fg="white",
+            activebackground="#1B5E20", width=10, cursor="hand2",
+        ).pack(side="right", padx=(6, 0))
+        tk.Button(
+            btn_frame, text="Cancelar", command=dlg.destroy,
+            font=("Arial", 10), width=10, cursor="hand2",
+        ).pack(side="right")
+
+        fecha_var.focus()
+
+
+# ---------------------------------------------------------------------------
+# Pantalla: Registro de pagos de departamentos
+# ---------------------------------------------------------------------------
+
+class RegistroPagos(tk.Frame):
+    DEPARTAMENTOS = [f"Depto {i}" for i in range(1, 21)]
+
+    def __init__(self, parent, controller):
+        super().__init__(parent)
+        self.controller = controller
+        self.pagos = []
+        self._construir_ui()
+
+    def _construir_ui(self):
+        # --- Barra superior ---
+        topbar = tk.Frame(self, pady=4)
+        topbar.pack(fill="x", padx=8)
+        tk.Button(
+            topbar, text="← Volver",
+            command=lambda: self.controller.show_frame("MenuPrincipal"),
+            font=("Arial", 9), relief="flat", cursor="hand2", fg="#1565C0",
+        ).pack(side="left")
+
+        tk.Label(self, text="Registro de Pagos", font=("Arial", 16, "bold")).pack(pady=(4, 6))
+
+        # --- Cuota del período ---
+        cuota_frame = tk.Frame(self, padx=24)
+        cuota_frame.pack(fill="x", pady=(0, 4))
+        tk.Label(cuota_frame, text="Cuota del período ($):", font=("Arial", 11)).pack(side="left")
+        self.cuota_var = tk.StringVar()
+        tk.Entry(cuota_frame, textvariable=self.cuota_var, font=("Arial", 11), width=12).pack(
+            side="left", padx=(8, 0)
+        )
+        self.cuota_var.trace_add("write", lambda *_: self._actualizar_saldo_label())
+
+        # --- Formulario ---
+        form = tk.Frame(self, padx=24, pady=4)
+        form.pack(fill="x")
+
+        tk.Label(form, text="Departamento:", font=("Arial", 11), width=14, anchor="w").grid(
+            row=0, column=0, pady=6, sticky="w"
+        )
+        self.depto_var = tk.StringVar()
+        self.depto_combo = ttk.Combobox(
+            form, textvariable=self.depto_var, values=self.DEPARTAMENTOS,
+            font=("Arial", 11), width=20, state="readonly",
+        )
+        self.depto_combo.grid(row=0, column=1, padx=10, pady=6, sticky="w")
+
+        tk.Label(form, text="Monto pagado ($):", font=("Arial", 11), width=14, anchor="w").grid(
+            row=1, column=0, pady=6, sticky="w"
+        )
+        self.monto_pago_var = tk.StringVar()
+        self.monto_pago_entry = tk.Entry(
+            form, textvariable=self.monto_pago_var, font=("Arial", 11), width=22
+        )
+        self.monto_pago_entry.grid(row=1, column=1, padx=10, pady=6, sticky="w")
+        self.monto_pago_var.trace_add("write", lambda *_: self._actualizar_saldo_label())
+
+        self.saldo_label = tk.Label(form, text="", font=("Arial", 10, "italic"), anchor="w")
+        self.saldo_label.grid(row=2, column=1, padx=10, sticky="w")
+
+        tk.Button(
+            form, text="Agregar", command=self._agregar_pago,
+            font=("Arial", 11, "bold"), bg="#6A1B9A", fg="white",
+            activebackground="#4A148C", activeforeground="white", width=12, cursor="hand2",
+        ).grid(row=3, column=1, pady=10, sticky="e")
+
+        # --- Separador ---
+        ttk.Separator(self, orient="horizontal").pack(fill="x", padx=20, pady=4)
+
+        # --- Tabla ---
+        tabla_frame = tk.Frame(self, padx=20)
+        tabla_frame.pack(fill="both", expand=True)
+
+        tk.Label(tabla_frame, text="Pagos del período", font=("Arial", 11, "bold")).pack(
+            anchor="w", pady=(4, 4)
+        )
+
+        cols = ("departamento", "monto_pagado", "saldo")
+        self.tabla = ttk.Treeview(tabla_frame, columns=cols, show="headings", height=7)
+        self.tabla.heading("departamento", text="Departamento")
+        self.tabla.heading("monto_pagado", text="Monto pagado")
+        self.tabla.heading("saldo", text="Saldo")
+        self.tabla.column("departamento", width=200, anchor="w")
+        self.tabla.column("monto_pagado", width=160, anchor="e")
+        self.tabla.column("saldo", width=160, anchor="e")
+        self.tabla.tag_configure("afavor",    foreground="#2E7D32")
+        self.tabla.tag_configure("pendiente", foreground="#C62828")
+        self.tabla.pack(fill="both", expand=True)
+
+        # --- Totales ---
+        self.total_pago_label = tk.Label(
+            self, text="Total recaudado:  $0.00", font=("Arial", 12, "bold"), anchor="e"
+        )
+        self.total_pago_label.pack(fill="x", padx=24, pady=(8, 2))
+
+        self.resumen_label = tk.Label(
+            self, text="A favor: 0   |   Pendientes: 0",
+            font=("Arial", 10), anchor="e", fg="#555555",
+        )
+        self.resumen_label.pack(fill="x", padx=24, pady=(0, 4))
+
+        tk.Button(
+            self, text="Aceptar", command=self._guardar_pagos,
+            font=("Arial", 11, "bold"), bg="#1565C0", fg="white",
+            activebackground="#0D47A1", activeforeground="white", width=14, cursor="hand2",
+        ).pack(anchor="e", padx=24, pady=(0, 12))
+
+        self.depto_combo.focus()
+
+    # --- Sugerencia de cuota ---
+
+    def actualizar_cuota_sugerida(self):
+        """Pre-carga la cuota del último registro de gastos si el campo está vacío."""
+        if self.cuota_var.get().strip():
+            return
+        if not os.path.exists(ARCHIVO_DATOS):
+            return
+        with open(ARCHIVO_DATOS, "r", encoding="utf-8") as f:
+            datos = json.load(f)
+        if datos:
+            self.cuota_var.set(f"{datos[-1]['cuota_por_depto']:.2f}")
+
+    # --- Saldo dinámico ---
+
+    def _actualizar_saldo_label(self):
+        try:
+            saldo = float(self.monto_pago_var.get()) - float(self.cuota_var.get())
+            if saldo > 0:
+                self.saldo_label.config(text=f"Saldo: +${saldo:,.2f}  (a favor)", fg="#2E7D32")
+            elif saldo < 0:
+                self.saldo_label.config(text=f"Saldo: -${abs(saldo):,.2f}  (pendiente)", fg="#C62828")
+            else:
+                self.saldo_label.config(text="Saldo: $0.00  (exacto)", fg="#555555")
+        except ValueError:
+            self.saldo_label.config(text="", fg="#555555")
+
+    # --- Agregar pago ---
+
+    def _agregar_pago(self):
+        depto = self.depto_var.get()
+        if not depto:
+            messagebox.showerror("Campo requerido", "Selecciona un departamento.")
+            self.depto_combo.focus()
+            return
+
+        if any(p["departamento"] == depto for p in self.pagos):
+            messagebox.showwarning("Duplicado", f"{depto} ya fue registrado en esta sesión.")
+            return
+
+        try:
+            cuota = float(self.cuota_var.get())
+            if cuota <= 0:
+                raise ValueError
+        except ValueError:
+            messagebox.showerror("Cuota inválida", "Ingresa una cuota del período válida.")
+            return
+
+        try:
+            monto = float(self.monto_pago_var.get())
+            if monto <= 0:
+                raise ValueError
+        except ValueError:
+            messagebox.showerror("Monto inválido", "Ingresa un monto decimal positivo.")
+            self.monto_pago_entry.focus()
+            return
+
+        saldo = monto - cuota
+        self.pagos.append({"departamento": depto, "monto_pagado": monto, "saldo": saldo})
+
+        saldo_str = f"+${saldo:,.2f}" if saldo >= 0 else f"-${abs(saldo):,.2f}"
+        tag = "afavor" if saldo > 0 else ("pendiente" if saldo < 0 else "")
+        self.tabla.insert("", "end", values=(depto, f"${monto:,.2f}", saldo_str),
+                          tags=(tag,) if tag else ())
+
+        total = sum(p["monto_pagado"] for p in self.pagos)
+        a_favor    = sum(1 for p in self.pagos if p["saldo"] > 0)
+        pendientes = sum(1 for p in self.pagos if p["saldo"] < 0)
+        self.total_pago_label.config(text=f"Total recaudado:  ${total:,.2f}")
+        self.resumen_label.config(text=f"A favor: {a_favor}   |   Pendientes: {pendientes}")
+
+        self.depto_var.set("")
+        self.monto_pago_var.set("")
+        self.saldo_label.config(text="", fg="#555555")
+        self.depto_combo.focus()
+
+    # --- Guardar ---
+
+    def _guardar_pagos(self):
+        if not self.pagos:
+            messagebox.showwarning("Sin datos", "No hay pagos para guardar.")
+            return
+        try:
+            cuota = float(self.cuota_var.get())
+            if cuota <= 0:
+                raise ValueError
+        except ValueError:
+            messagebox.showerror("Cuota inválida", "Ingresa una cuota del período válida.")
+            return
+
+        total = sum(p["monto_pagado"] for p in self.pagos)
+        registro = {
+            "guardado_en":    datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+            "cuota_periodo":  cuota,
+            "pagos":          list(self.pagos),
+            "total_recaudado": total,
+        }
+
+        datos = []
+        if os.path.exists(ARCHIVO_PAGOS):
+            with open(ARCHIVO_PAGOS, "r", encoding="utf-8") as f:
+                datos = json.load(f)
+        datos.append(registro)
+        with open(ARCHIVO_PAGOS, "w", encoding="utf-8") as f:
+            json.dump(datos, f, ensure_ascii=False, indent=2)
+
+        messagebox.showinfo(
+            "Guardado",
+            f"Pagos guardados correctamente.\n"
+            f"{len(self.pagos)} departamento(s)  —  Total: ${total:,.2f}",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Pantalla: Vista de pagos guardados
+# ---------------------------------------------------------------------------
+
+class VistaPagos(tk.Frame):
+    def __init__(self, parent, controller):
+        super().__init__(parent)
+        self.controller = controller
+        self._construir_ui()
+
+    def _construir_ui(self):
+        # --- Barra superior ---
+        topbar = tk.Frame(self, pady=4)
+        topbar.pack(fill="x", padx=8)
+        tk.Button(
+            topbar, text="← Volver",
+            command=lambda: self.controller.show_frame("MenuPrincipal"),
+            font=("Arial", 9), relief="flat", cursor="hand2", fg="#1565C0",
+        ).pack(side="left")
+
+        tk.Label(self, text="Pagos guardados", font=("Arial", 13, "bold")).pack(pady=(4, 6))
+
+        frame = tk.Frame(self)
+        frame.pack(fill="both", expand=True, padx=16, pady=(0, 4))
+
+        cols = ("guardado_en", "cuota", "n_deptos", "total")
+        self.tree = ttk.Treeview(frame, columns=cols, show="headings tree")
+        self.tree.heading("#0", text="")
+        self.tree.column("#0", width=20, stretch=False)
+        self.tree.heading("guardado_en", text="Guardado en")
+        self.tree.heading("cuota",       text="Cuota")
+        self.tree.heading("n_deptos",    text="Deptos")
+        self.tree.heading("total",       text="Total recaudado")
+        self.tree.column("guardado_en", width=155, anchor="center")
+        self.tree.column("cuota",       width=95,  anchor="e")
+        self.tree.column("n_deptos",    width=65,  anchor="center")
+        self.tree.column("total",       width=150, anchor="e")
+
+        sb = ttk.Scrollbar(frame, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=sb.set)
+        self.tree.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y")
+
+        self.tree.tag_configure("sesion",    background="#F3E5F5")
+        self.tree.tag_configure("afavor",    foreground="#2E7D32")
+        self.tree.tag_configure("pendiente", foreground="#C62828")
+
+        # --- Botones ---
+        btn_frame = tk.Frame(self)
+        btn_frame.pack(fill="x", padx=16, pady=(6, 10))
+
+        tk.Button(
+            btn_frame, text="Editar pago", command=self._editar_seleccionado,
+            font=("Arial", 10, "bold"), bg="#E65100", fg="white",
+            activebackground="#BF360C", width=14, cursor="hand2",
+        ).pack(side="left", padx=(0, 8))
+
+        tk.Button(
+            btn_frame, text="Eliminar", command=self._eliminar_seleccionado,
+            font=("Arial", 10, "bold"), bg="#C62828", fg="white",
+            activebackground="#B71C1C", width=14, cursor="hand2",
+        ).pack(side="left")
+
+    # --- Persistencia ---
+
+    def _leer_datos(self):
+        if not os.path.exists(ARCHIVO_PAGOS):
+            return []
+        with open(ARCHIVO_PAGOS, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    def _guardar_datos(self, datos):
+        with open(ARCHIVO_PAGOS, "w", encoding="utf-8") as f:
+            json.dump(datos, f, ensure_ascii=False, indent=2)
+
+    def _parsear_iid(self, iid):
+        parts = iid.split("_")
+        if len(parts) == 2:       # "pag_N"
+            return int(parts[1]), None
+        return int(parts[1]), int(parts[3])   # "pag_N_dep_M"
+
+    # --- Carga ---
+
+    def cargar_datos(self):
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+
+        datos = self._leer_datos()
+
+        for original_idx in range(len(datos) - 1, -1, -1):
+            reg = datos[original_idx]
+            self.tree.insert(
+                "", "end", iid=f"pag_{original_idx}", text="",
+                values=(
+                    reg["guardado_en"],
+                    f"${reg['cuota_periodo']:,.2f}",
+                    len(reg["pagos"]),
+                    f"${reg['total_recaudado']:,.2f}",
+                ),
+                tags=("sesion",),
+            )
+            for dep_idx, p in enumerate(reg["pagos"]):
+                saldo = p["saldo"]
+                saldo_str = f"+${saldo:,.2f}" if saldo >= 0 else f"-${abs(saldo):,.2f}"
+                tag = "afavor" if saldo > 0 else ("pendiente" if saldo < 0 else "")
+                self.tree.insert(
+                    f"pag_{original_idx}", "end",
+                    iid=f"pag_{original_idx}_dep_{dep_idx}",
+                    values=(p["departamento"], f"${p['monto_pagado']:,.2f}", saldo_str, ""),
+                    tags=(tag,) if tag else (),
+                )
+
+    # --- Acciones ---
+
+    def _eliminar_seleccionado(self):
+        seleccion = self.tree.selection()
+        if not seleccion:
+            messagebox.showwarning("Nada seleccionado", "Selecciona un registro o pago para eliminar.")
+            return
+
+        session_idx, dep_idx = self._parsear_iid(seleccion[0])
+        datos = self._leer_datos()
+
+        if dep_idx is None:
+            reg = datos[session_idx]
+            if not messagebox.askyesno(
+                "Eliminar registro",
+                f"¿Eliminar el registro del {reg['guardado_en']}?\n"
+                f"Se eliminarán {len(reg['pagos'])} pago(s).",
+            ):
+                return
+            del datos[session_idx]
+        else:
+            p = datos[session_idx]["pagos"][dep_idx]
+            if not messagebox.askyesno(
+                "Eliminar pago",
+                f"¿Eliminar el pago de '{p['departamento']}' (${p['monto_pagado']:,.2f})?",
+            ):
+                return
+            del datos[session_idx]["pagos"][dep_idx]
+            if not datos[session_idx]["pagos"]:
+                del datos[session_idx]
+            else:
+                datos[session_idx]["total_recaudado"] = sum(
+                    p["monto_pagado"] for p in datos[session_idx]["pagos"]
+                )
+
+        self._guardar_datos(datos)
+        self.cargar_datos()
+
+    def _editar_seleccionado(self):
+        seleccion = self.tree.selection()
+        if not seleccion:
+            messagebox.showwarning("Nada seleccionado", "Selecciona un pago individual para editar.")
+            return
+
+        session_idx, dep_idx = self._parsear_iid(seleccion[0])
+        if dep_idx is None:
+            messagebox.showinfo(
+                "Selecciona un pago",
+                "Selecciona un pago individual (fila interna) para editarlo.",
+            )
+            return
+
+        datos = self._leer_datos()
+        pago  = datos[session_idx]["pagos"][dep_idx]
+        cuota = datos[session_idx]["cuota_periodo"]
+        self._abrir_dialogo_editar(session_idx, dep_idx, pago, cuota)
+
+    def _abrir_dialogo_editar(self, session_idx, dep_idx, pago, cuota):
+        dlg = tk.Toplevel(self)
+        dlg.title("Editar pago")
+        dlg.geometry("360x205")
+        dlg.resizable(False, False)
+        dlg.grab_set()
+
+        form = tk.Frame(dlg, padx=20, pady=16)
+        form.pack(fill="both", expand=True)
+
+        tk.Label(form, text="Departamento:", font=("Arial", 11), width=14, anchor="w").grid(
+            row=0, column=0, pady=7, sticky="w"
+        )
+        depto_combo = ttk.Combobox(
+            form, values=RegistroPagos.DEPARTAMENTOS,
+            font=("Arial", 11), width=18, state="readonly",
+        )
+        depto_combo.set(pago["departamento"])
+        depto_combo.grid(row=0, column=1, pady=7, sticky="w")
+
+        tk.Label(form, text="Monto pagado ($):", font=("Arial", 11), width=14, anchor="w").grid(
+            row=1, column=0, pady=7, sticky="w"
+        )
+        monto_entry = tk.Entry(form, font=("Arial", 11), width=20)
+        monto_entry.insert(0, str(pago["monto_pagado"]))
+        monto_entry.grid(row=1, column=1, pady=7, sticky="w")
+
+        saldo_lbl = tk.Label(form, text="", font=("Arial", 10, "italic"), anchor="w")
+        saldo_lbl.grid(row=2, column=1, sticky="w")
+
+        def actualizar_saldo(*_):
+            try:
+                s = float(monto_entry.get()) - cuota
+                if s > 0:
+                    saldo_lbl.config(text=f"+${s:,.2f}  (a favor)", fg="#2E7D32")
+                elif s < 0:
+                    saldo_lbl.config(text=f"-${abs(s):,.2f}  (pendiente)", fg="#C62828")
+                else:
+                    saldo_lbl.config(text="$0.00  (exacto)", fg="#555555")
+            except ValueError:
+                saldo_lbl.config(text="")
+
+        monto_entry.bind("<KeyRelease>", actualizar_saldo)
+        actualizar_saldo()
+
+        def guardar():
+            nuevo_depto = depto_combo.get()
+            if not nuevo_depto:
+                messagebox.showerror("Campo requerido", "Selecciona un departamento.", parent=dlg)
+                return
+            try:
+                nuevo_monto = float(monto_entry.get())
+                if nuevo_monto <= 0:
+                    raise ValueError
+            except ValueError:
+                messagebox.showerror("Monto inválido", "Ingresa un monto decimal positivo.", parent=dlg)
+                return
+
+            datos = self._leer_datos()
+            datos[session_idx]["pagos"][dep_idx] = {
+                "departamento": nuevo_depto,
+                "monto_pagado": nuevo_monto,
+                "saldo": nuevo_monto - cuota,
+            }
+            datos[session_idx]["total_recaudado"] = sum(
+                p["monto_pagado"] for p in datos[session_idx]["pagos"]
+            )
+            self._guardar_datos(datos)
+            dlg.destroy()
+            self.cargar_datos()
+
+        btn_frame = tk.Frame(dlg)
+        btn_frame.pack(fill="x", padx=20, pady=(0, 14))
+        tk.Button(
+            btn_frame, text="Guardar", command=guardar,
+            font=("Arial", 10, "bold"), bg="#2E7D32", fg="white",
+            activebackground="#1B5E20", width=10, cursor="hand2",
+        ).pack(side="right", padx=(6, 0))
+        tk.Button(
+            btn_frame, text="Cancelar", command=dlg.destroy,
+            font=("Arial", 10), width=10, cursor="hand2",
+        ).pack(side="right")
+
+        monto_entry.focus()
+
+
+# ---------------------------------------------------------------------------
 root = tk.Tk()
-AdministracionEdificio(root)
+AdministracionApp(root)
 root.mainloop()
