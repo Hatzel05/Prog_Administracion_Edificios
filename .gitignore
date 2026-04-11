@@ -1,0 +1,8 @@
+# Datos de ejecución
+gastos.json
+pagos.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
