@@ -1,5 +1,6 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
+from datetime import date
 
 
 class AdministracionEdificio:
@@ -54,11 +55,18 @@ class AdministracionEdificio:
         self.concepto_otro = tk.Entry(form, font=("Arial", 11), width=36, state="disabled")
         self.concepto_otro.grid(row=1, column=1, padx=10, pady=(0, 6))
 
-        tk.Label(form, text="Monto ($):", font=("Arial", 11), width=10, anchor="w").grid(
+        tk.Label(form, text="Fecha:", font=("Arial", 11), width=10, anchor="w").grid(
             row=2, column=0, pady=6, sticky="w"
         )
+        self.fecha_entry = tk.Entry(form, font=("Arial", 11), width=36)
+        self.fecha_entry.insert(0, date.today().strftime("%d/%m/%Y"))
+        self.fecha_entry.grid(row=2, column=1, padx=10, pady=6)
+
+        tk.Label(form, text="Monto ($):", font=("Arial", 11), width=10, anchor="w").grid(
+            row=3, column=0, pady=6, sticky="w"
+        )
         self.monto_entry = tk.Entry(form, font=("Arial", 11), width=36)
-        self.monto_entry.grid(row=2, column=1, padx=10, pady=6)
+        self.monto_entry.grid(row=3, column=1, padx=10, pady=6)
 
         tk.Button(
             form,
@@ -71,7 +79,7 @@ class AdministracionEdificio:
             activeforeground="white",
             width=12,
             cursor="hand2",
-        ).grid(row=3, column=1, pady=10, sticky="e")
+        ).grid(row=4, column=1, pady=10, sticky="e")
 
         # --- Separador ---
         ttk.Separator(self.root, orient="horizontal").pack(fill="x", padx=20, pady=4)
@@ -84,11 +92,13 @@ class AdministracionEdificio:
             anchor="w", pady=(6, 4)
         )
 
-        cols = ("concepto", "monto")
+        cols = ("fecha", "concepto", "monto")
         self.tabla = ttk.Treeview(tabla_frame, columns=cols, show="headings", height=10)
+        self.tabla.heading("fecha", text="Fecha")
         self.tabla.heading("concepto", text="Concepto")
         self.tabla.heading("monto", text="Monto")
-        self.tabla.column("concepto", width=400, anchor="w")
+        self.tabla.column("fecha", width=100, anchor="center")
+        self.tabla.column("concepto", width=300, anchor="w")
         self.tabla.column("monto", width=140, anchor="e")
         self.tabla.pack(fill="both", expand=True)
 
@@ -128,6 +138,7 @@ class AdministracionEdificio:
         else:
             concepto = seleccion
 
+        fecha = self.fecha_entry.get().strip()
         monto_str = self.monto_entry.get().strip()
 
         if not concepto:
@@ -150,8 +161,8 @@ class AdministracionEdificio:
             self.monto_entry.focus()
             return
 
-        self.gastos.append({"concepto": concepto, "monto": monto})
-        self.tabla.insert("", "end", values=(concepto, f"${monto:,.2f}"))
+        self.gastos.append({"fecha": fecha, "concepto": concepto, "monto": monto})
+        self.tabla.insert("", "end", values=(fecha, concepto, f"${monto:,.2f}"))
 
         total = sum(g["monto"] for g in self.gastos)
         self.total_label.config(text=f"Total:  ${total:,.2f}")
@@ -160,6 +171,8 @@ class AdministracionEdificio:
         self.concepto_var.set("")
         self.concepto_otro.delete(0, tk.END)
         self.concepto_otro.config(state="disabled")
+        self.fecha_entry.delete(0, tk.END)
+        self.fecha_entry.insert(0, date.today().strftime("%d/%m/%Y"))
         self.monto_entry.delete(0, tk.END)
         self.concepto_combo.focus()
 
