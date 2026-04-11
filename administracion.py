@@ -11,6 +11,7 @@ class AdministracionEdificio:
         self.root.resizable(False, False)
 
         self.gastos = []
+        self.fecha_desbloqueada = False
 
         self._construir_ui()
 
@@ -58,9 +59,18 @@ class AdministracionEdificio:
         tk.Label(form, text="Fecha:", font=("Arial", 11), width=10, anchor="w").grid(
             row=2, column=0, pady=6, sticky="w"
         )
-        self.fecha_entry = tk.Entry(form, font=("Arial", 11), width=36)
+        self.fecha_entry = tk.Entry(form, font=("Arial", 11), width=28, state="readonly")
         self.fecha_entry.insert(0, date.today().strftime("%d/%m/%Y"))
-        self.fecha_entry.grid(row=2, column=1, padx=10, pady=6)
+        self.fecha_entry.grid(row=2, column=1, padx=10, pady=6, sticky="w")
+        self.fecha_btn = tk.Button(
+            form,
+            text="Editar",
+            command=self._toggle_fecha,
+            font=("Arial", 9),
+            width=7,
+            cursor="hand2",
+        )
+        self.fecha_btn.grid(row=2, column=2, padx=(0, 10), pady=6)
 
         tk.Label(form, text="Monto ($):", font=("Arial", 11), width=10, anchor="w").grid(
             row=3, column=0, pady=6, sticky="w"
@@ -123,6 +133,17 @@ class AdministracionEdificio:
         # Foco inicial
         self.concepto_combo.focus()
 
+    def _toggle_fecha(self):
+        if self.fecha_desbloqueada:
+            self.fecha_entry.config(state="readonly")
+            self.fecha_btn.config(text="Editar")
+            self.fecha_desbloqueada = False
+        else:
+            self.fecha_entry.config(state="normal")
+            self.fecha_btn.config(text="Bloquear")
+            self.fecha_desbloqueada = True
+            self.fecha_entry.focus()
+
     def _on_concepto_select(self, event=None):
         if self.concepto_var.get() == "Otros":
             self.concepto_otro.config(state="normal")
@@ -138,7 +159,7 @@ class AdministracionEdificio:
         else:
             concepto = seleccion
 
-        fecha = self.fecha_entry.get().strip()
+        fecha = self.fecha_entry.get().strip() if self.fecha_desbloqueada else date.today().strftime("%d/%m/%Y")
         monto_str = self.monto_entry.get().strip()
 
         if not concepto:
@@ -171,8 +192,12 @@ class AdministracionEdificio:
         self.concepto_var.set("")
         self.concepto_otro.delete(0, tk.END)
         self.concepto_otro.config(state="disabled")
+        self.fecha_entry.config(state="normal")
         self.fecha_entry.delete(0, tk.END)
         self.fecha_entry.insert(0, date.today().strftime("%d/%m/%Y"))
+        self.fecha_entry.config(state="readonly")
+        self.fecha_btn.config(text="Editar")
+        self.fecha_desbloqueada = False
         self.monto_entry.delete(0, tk.END)
         self.concepto_combo.focus()
 
