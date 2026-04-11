@@ -59,8 +59,9 @@ class AdministracionEdificio:
         tk.Label(form, text="Fecha:", font=("Arial", 11), width=10, anchor="w").grid(
             row=2, column=0, pady=6, sticky="w"
         )
-        self.fecha_entry = tk.Entry(form, font=("Arial", 11), width=28, state="readonly")
+        self.fecha_entry = tk.Entry(form, font=("Arial", 11), width=28)
         self.fecha_entry.insert(0, date.today().strftime("%d/%m/%Y"))
+        self.fecha_entry.config(state="readonly")
         self.fecha_entry.grid(row=2, column=1, padx=10, pady=6, sticky="w")
         self.fecha_btn = tk.Button(
             form,
