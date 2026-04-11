@@ -27,18 +27,36 @@ ARCHIVO_DATOS  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gasto
 ARCHIVO_PAGOS  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pagos.json")
 
 
+def _abrir_pdf(ruta):
+    """Abre un PDF usando el visor predeterminado, compatible con WSL."""
+    import subprocess, shutil
+    try:
+        # Copiar a C:\LinuxMiatech\ para que Windows pueda acceder sin restricciones UNC
+        nombre = os.path.basename(ruta)
+        destino_win = f"/mnt/c/LinuxMiatech/{nombre}"
+        shutil.copy2(ruta, destino_win)
+        subprocess.Popen(["powershell.exe", "-c",
+                          f"Start-Process 'C:\\LinuxMiatech\\{nombre}'"])
+    except Exception:
+        try:
+            subprocess.Popen(["xdg-open", ruta])
+        except Exception:
+            pass
+
+
 class AdministracionApp:
     """Controlador principal: gestiona la ventana y la navegación entre pantallas."""
 
     TAMANIOS = {
-        "MenuPrincipal":  "400x650",
-        "RegistroGastos": "620x580",
-        "VistaRegistros": "680x490",
-        "RegistroPagos":  "600x580",
-        "VistaPagos":     "680x490",
+        "MenuPrincipal":   "400x720",
+        "RegistroGastos":  "620x620",
+        "VistaRegistros":  "680x490",
+        "RegistroPagos":   "600x580",
+        "VistaPagos":      "680x490",
         "SaldosAFavor":    "560x420",
         "SaldosPendientes":"560x420",
         "GenerarReporte":  "500x380",
+        "ReporteGastos":   "500x400",
     }
 
     def __init__(self, root):
@@ -54,7 +72,8 @@ class AdministracionApp:
         self.frames = {}
         for FrameClass in (MenuPrincipal, RegistroGastos, VistaRegistros,
                            RegistroPagos, VistaPagos,
-                           SaldosAFavor, SaldosPendientes, GenerarReporte):
+                           SaldosAFavor, SaldosPendientes, GenerarReporte,
+                           ReporteGastos):
             frame = FrameClass(container, self)
             self.frames[FrameClass.__name__] = frame
             frame.grid(row=0, column=0, sticky="nsew")
@@ -65,7 +84,7 @@ class AdministracionApp:
         self.root.geometry(self.TAMANIOS[name])
         self.frames[name].tkraise()
         if name in ("VistaRegistros", "VistaPagos", "SaldosAFavor",
-                    "SaldosPendientes", "GenerarReporte"):
+                    "SaldosPendientes", "GenerarReporte", "ReporteGastos"):
             self.frames[name].cargar_datos()
         elif name == "RegistroPagos":
             self.frames[name].actualizar_cuota_sugerida()
@@ -123,6 +142,21 @@ class MenuPrincipal(tk.Frame):
             bg="#1565C0",
             fg="white",
             activebackground="#0D47A1",
+            activeforeground="white",
+            width=26,
+            height=2,
+            cursor="hand2",
+            relief="flat",
+        ).pack(pady=8)
+
+        tk.Button(
+            self,
+            text="Reporte de Gastos PDF",
+            command=lambda: self.controller.show_frame("ReporteGastos"),
+            font=("Arial", 12, "bold"),
+            bg="#E65100",
+            fg="white",
+            activebackground="#BF360C",
             activeforeground="white",
             width=26,
             height=2,
@@ -333,8 +367,22 @@ class RegistroGastos(tk.Frame):
         )
         self.cuota_label.pack(fill="x", padx=24, pady=(0, 6))
 
+        botones_frame = tk.Frame(self)
+        botones_frame.pack(fill="x", padx=24, pady=(0, 14))
         tk.Button(
-            self,
+            botones_frame,
+            text="Generar Reporte",
+            command=self._generar_reporte_actual,
+            font=("Arial", 11, "bold"),
+            bg="#E65100",
+            fg="white",
+            activebackground="#BF360C",
+            activeforeground="white",
+            width=16,
+            cursor="hand2",
+        ).pack(side="left")
+        tk.Button(
+            botones_frame,
             text="Aceptar",
             command=self._guardar_registros,
             font=("Arial", 11, "bold"),
@@ -344,7 +392,7 @@ class RegistroGastos(tk.Frame):
             activeforeground="white",
             width=14,
             cursor="hand2",
-        ).pack(anchor="e", padx=24, pady=(0, 14))
+        ).pack(side="right")
 
         # Pre-cargar Fondo de ahorro en tabla
         for g in self.gastos:
@@ -435,6 +483,36 @@ class RegistroGastos(tk.Frame):
         self._resetear_campo_fecha(self.fecha_entry, self.fecha_btn)
         self.monto_entry.delete(0, tk.END)
         self.concepto_combo.focus()
+
+    def _generar_reporte_actual(self):
+        if not REPORTLAB_OK:
+            messagebox.showerror(
+                "Librería no disponible",
+                "reportlab no está instalado.\n\n"
+                "Ejecuta en la terminal:\n"
+                "  python3 -m pip install reportlab",
+            )
+            return
+        if len(self.gastos) == 0:
+            messagebox.showwarning("Sin datos", "No hay gastos para reportar.")
+            return
+
+        hoy = date.today()
+        mes_label = f"{MESES_ES[hoy.month]} {hoy.year}"
+
+        def _generar():
+            try:
+                carpeta = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reportes")
+                os.makedirs(carpeta, exist_ok=True)
+                nombre = f"gastos_{hoy.strftime('%m_%Y')}_{datetime.now().strftime('%H%M%S')}.pdf"
+                ruta = os.path.join(carpeta, nombre)
+                _construir_pdf_gastos(ruta, mes_label, self.gastos)
+                messagebox.showinfo("PDF generado", f"Reporte guardado en:\n{ruta}")
+                _abrir_pdf(ruta)
+            except Exception as e:
+                messagebox.showerror("Error al generar PDF", str(e))
+
+        _abrir_preview_gastos(self, mes_label, self.gastos, _generar)
 
     def _guardar_registros(self):
         if not self.gastos:
@@ -1552,9 +1630,7 @@ class GenerarReporte(tk.Frame):
             "PDF generado",
             f"Reporte guardado en:\n{archivo}",
         )
-        import subprocess, sys
-        if sys.platform.startswith("linux"):
-            subprocess.Popen(["xdg-open", archivo])
+        _abrir_pdf(archivo)
 
 
 def _construir_pdf(ruta, mes_label, gastos_mes, pagos_mes):
@@ -1689,6 +1765,281 @@ class SaldosAFavor(_BaseResumenSaldos):
 class SaldosPendientes(_BaseResumenSaldos):
     TITULO = "Departamentos con Saldo Pendiente"
     SOLO_POSITIVOS = False
+
+
+# ---------------------------------------------------------------------------
+# Vista previa de gastos (diálogo reutilizable)
+# ---------------------------------------------------------------------------
+
+def _abrir_preview_gastos(parent, mes_label, gastos_lista, on_confirmar):
+    """Abre un Toplevel con la vista previa del reporte de gastos.
+    on_confirmar() se llama si el usuario confirma la generación."""
+    dlg = tk.Toplevel(parent)
+    dlg.title(f"Vista previa — {mes_label}")
+    dlg.geometry("580x490")
+    dlg.resizable(False, False)
+    dlg.grab_set()
+
+    tk.Label(dlg, text="Vista previa del reporte",
+             font=("Arial", 14, "bold")).pack(pady=(12, 2))
+    tk.Label(dlg, text=mes_label,
+             font=("Arial", 11), fg="#555555").pack(pady=(0, 8))
+
+    tabla_frame = tk.Frame(dlg, padx=16)
+    tabla_frame.pack(fill="both", expand=True)
+
+    cols = ("fecha", "concepto", "monto")
+    tree = ttk.Treeview(tabla_frame, columns=cols, show="headings", height=13)
+    tree.heading("fecha",    text="Fecha")
+    tree.heading("concepto", text="Concepto")
+    tree.heading("monto",    text="Monto")
+    tree.column("fecha",    width=90,  anchor="center")
+    tree.column("concepto", width=320, anchor="w")
+    tree.column("monto",    width=100, anchor="e")
+
+    sb = ttk.Scrollbar(tabla_frame, orient="vertical", command=tree.yview)
+    tree.configure(yscrollcommand=sb.set)
+    tree.pack(side="left", fill="both", expand=True)
+    sb.pack(side="right", fill="y")
+
+    for g in gastos_lista:
+        fondo = g["concepto"] == "Fondo de ahorro"
+        tree.insert("", "end",
+                    values=(g["fecha"], g["concepto"], f"${g['monto']:,.2f}"),
+                    tags=("fondo",) if fondo else ())
+    tree.tag_configure("fondo", foreground="#1565C0")
+
+    total = sum(g["monto"] for g in gastos_lista)
+    cuota = total / 20
+
+    tk.Label(dlg, text=f"Total:  ${total:,.2f}",
+             font=("Arial", 11, "bold"), anchor="e"
+             ).pack(fill="x", padx=16, pady=(8, 2))
+    tk.Label(dlg, text=f"Cuota por departamento (÷20):  ${cuota:,.2f}",
+             font=("Arial", 10), anchor="e", fg="#555555"
+             ).pack(fill="x", padx=16, pady=(0, 4))
+
+    ttk.Separator(dlg, orient="horizontal").pack(fill="x", padx=16, pady=6)
+
+    btn_frame = tk.Frame(dlg)
+    btn_frame.pack(fill="x", padx=16, pady=(0, 12))
+
+    tk.Button(btn_frame, text="Cancelar", command=dlg.destroy,
+              font=("Arial", 10), width=12, cursor="hand2"
+              ).pack(side="left")
+
+    def _confirmar():
+        dlg.destroy()
+        on_confirmar()
+
+    tk.Button(btn_frame, text="Generar PDF", command=_confirmar,
+              font=("Arial", 11, "bold"), bg="#E65100", fg="white",
+              activebackground="#BF360C", activeforeground="white",
+              width=14, cursor="hand2"
+              ).pack(side="right")
+
+
+# ---------------------------------------------------------------------------
+# Pantalla: Reporte de gastos PDF
+# ---------------------------------------------------------------------------
+
+class ReporteGastos(tk.Frame):
+    def __init__(self, parent, controller):
+        super().__init__(parent)
+        self.controller = controller
+        self._meses_disponibles = []
+        self._construir_ui()
+
+    def _construir_ui(self):
+        topbar = tk.Frame(self, pady=4)
+        topbar.pack(fill="x", padx=8)
+        tk.Button(
+            topbar, text="← Volver",
+            command=lambda: self.controller.show_frame("MenuPrincipal"),
+            font=("Arial", 9), relief="flat", cursor="hand2", fg="#1565C0",
+        ).pack(side="left")
+
+        tk.Label(self, text="Reporte de Gastos PDF", font=("Arial", 16, "bold")).pack(pady=(4, 10))
+
+        form = tk.Frame(self, padx=30)
+        form.pack(fill="x")
+
+        tk.Label(form, text="Mes del reporte:", font=("Arial", 11), anchor="w").grid(
+            row=0, column=0, sticky="w", pady=8
+        )
+        self.mes_var = tk.StringVar()
+        self.mes_combo = ttk.Combobox(
+            form, textvariable=self.mes_var, font=("Arial", 11),
+            width=22, state="readonly",
+        )
+        self.mes_combo.grid(row=0, column=1, padx=12, pady=8, sticky="w")
+        self.mes_combo.bind("<<ComboboxSelected>>", self._on_mes_select)
+
+        self.info_label = tk.Label(
+            self, text="", font=("Arial", 10), fg="#444444", anchor="w", justify="left"
+        )
+        self.info_label.pack(fill="x", padx=30, pady=(4, 10))
+
+        ttk.Separator(self, orient="horizontal").pack(fill="x", padx=20, pady=8)
+
+        tk.Button(
+            self, text="Generar PDF",
+            command=self._generar_pdf,
+            font=("Arial", 12, "bold"),
+            bg="#E65100", fg="white",
+            activebackground="#BF360C", activeforeground="white",
+            width=18, height=2, cursor="hand2",
+        ).pack(pady=10)
+
+        self.estado_label = tk.Label(self, text="", font=("Arial", 10), fg="#2E7D32")
+        self.estado_label.pack(pady=(0, 8))
+
+    def cargar_datos(self):
+        self.estado_label.config(text="")
+        self.info_label.config(text="")
+
+        meses = {}
+        if os.path.exists(ARCHIVO_DATOS):
+            with open(ARCHIVO_DATOS, "r", encoding="utf-8") as f:
+                for reg in json.load(f):
+                    mk = reg["guardado_en"][3:10]
+                    if mk not in meses:
+                        mes_n = int(mk[:2])
+                        meses[mk] = f"{MESES_ES[mes_n]} {mk[3:]}"
+
+        self._meses_disponibles = sorted(meses.items(), reverse=True)
+        labels = [lbl for _, lbl in self._meses_disponibles]
+        self.mes_combo["values"] = labels
+
+        if labels:
+            self.mes_combo.current(0)
+            self._on_mes_select()
+        else:
+            self.mes_combo.set("")
+            self.info_label.config(text="No hay registros de gastos guardados.")
+
+    def _on_mes_select(self, event=None):
+        lbl = self.mes_var.get()
+        mk = next((k for k, v in self._meses_disponibles if v == lbl), None)
+        if not mk:
+            return
+        n = 0
+        if os.path.exists(ARCHIVO_DATOS):
+            with open(ARCHIVO_DATOS, "r", encoding="utf-8") as f:
+                for reg in json.load(f):
+                    if reg["guardado_en"][3:10] == mk:
+                        n += len(reg["gastos"])
+        self.info_label.config(text=f"  Gastos registrados: {n} concepto(s)")
+
+    def _generar_pdf(self):
+        if not REPORTLAB_OK:
+            messagebox.showerror(
+                "Librería no disponible",
+                "reportlab no está instalado.\n\n"
+                "Ejecuta en la terminal:\n"
+                "  python3 -m pip install reportlab",
+            )
+            return
+
+        lbl = self.mes_var.get()
+        mk = next((k for k, v in self._meses_disponibles if v == lbl), None)
+        if not mk:
+            messagebox.showwarning("Sin selección", "Selecciona un mes para generar el reporte.")
+            return
+
+        gastos_lista = []
+        if os.path.exists(ARCHIVO_DATOS):
+            with open(ARCHIVO_DATOS, "r", encoding="utf-8") as f:
+                for reg in json.load(f):
+                    if reg["guardado_en"][3:10] == mk:
+                        gastos_lista.extend(reg["gastos"])
+
+        if not gastos_lista:
+            messagebox.showwarning("Sin datos", f"No hay gastos registrados para {lbl}.")
+            return
+
+        def _generar():
+            try:
+                carpeta = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reportes")
+                os.makedirs(carpeta, exist_ok=True)
+                archivo = os.path.join(carpeta, f"gastos_{mk.replace('/', '_')}.pdf")
+                _construir_pdf_gastos(archivo, lbl, gastos_lista)
+                self.estado_label.config(text=f"PDF generado: {os.path.basename(archivo)}")
+                messagebox.showinfo("PDF generado", f"Reporte guardado en:\n{archivo}")
+                _abrir_pdf(archivo)
+            except Exception as e:
+                messagebox.showerror("Error al generar PDF", str(e))
+
+        _abrir_preview_gastos(self, lbl, gastos_lista, _generar)
+
+
+def _construir_pdf_gastos(ruta, mes_label, gastos_lista):
+    """Genera PDF con el desglose de gastos del mes."""
+    doc = SimpleDocTemplate(
+        ruta, pagesize=A4,
+        leftMargin=2*cm, rightMargin=2*cm,
+        topMargin=2*cm, bottomMargin=2*cm,
+    )
+
+    estilos = getSampleStyleSheet()
+    est_titulo = ParagraphStyle("titulo", parent=estilos["Title"],
+                                fontSize=18, spaceAfter=4)
+    est_subtitulo = ParagraphStyle("sub", parent=estilos["Normal"],
+                                   fontSize=12, spaceAfter=2, alignment=TA_CENTER)
+    est_seccion = ParagraphStyle("seccion", parent=estilos["Normal"],
+                                 fontSize=12, fontName="Helvetica-Bold",
+                                 spaceBefore=14, spaceAfter=6)
+    est_pie = ParagraphStyle("pie", parent=estilos["Normal"],
+                              fontSize=9, textColor=colors.grey, alignment=TA_CENTER)
+
+    GRIS_ENCABEZADO = colors.HexColor("#E65100")
+    GRIS_CLARO      = colors.HexColor("#FFF3E0")
+    AZUL_TOTAL      = colors.HexColor("#FFE0B2")
+
+    ancho_util = A4[0] - 4*cm
+
+    contenido = []
+
+    contenido.append(Paragraph("Administración del Edificio", est_titulo))
+    contenido.append(Paragraph(f"Reporte de Gastos — {mes_label}", est_subtitulo))
+    contenido.append(Paragraph(
+        f"Generado el {datetime.now().strftime('%d/%m/%Y %H:%M')}",
+        est_pie,
+    ))
+    contenido.append(HRFlowable(width="100%", thickness=1,
+                                color=GRIS_ENCABEZADO, spaceAfter=14))
+
+    contenido.append(Paragraph("Desglose de Gastos del Edificio", est_seccion))
+
+    total = sum(g["monto"] for g in gastos_lista)
+    cuota = total / 20
+
+    datos_tabla = [["Fecha", "Concepto", "Monto"]]
+    for g in gastos_lista:
+        datos_tabla.append([g["fecha"], g["concepto"], f"${g['monto']:,.2f}"])
+    datos_tabla.append(["", "TOTAL", f"${total:,.2f}"])
+    datos_tabla.append(["", "Cuota por departamento (÷20)", f"${cuota:,.2f}"])
+
+    col_w = [2.5*cm, ancho_util - 2.5*cm - 3*cm, 3*cm]
+    t = Table(datos_tabla, colWidths=col_w, repeatRows=1)
+    t.setStyle(TableStyle([
+        ("BACKGROUND",     (0, 0), (-1, 0),  GRIS_ENCABEZADO),
+        ("TEXTCOLOR",      (0, 0), (-1, 0),  colors.white),
+        ("FONTNAME",       (0, 0), (-1, 0),  "Helvetica-Bold"),
+        ("FONTSIZE",       (0, 0), (-1, 0),  10),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -3), [colors.white, GRIS_CLARO]),
+        ("BACKGROUND",     (0, -2), (-1, -1), AZUL_TOTAL),
+        ("FONTNAME",       (1, -2), (2, -1), "Helvetica-Bold"),
+        ("ALIGN",          (2, 0), (2, -1),  "RIGHT"),
+        ("ALIGN",          (0, 0), (0, -1),  "CENTER"),
+        ("GRID",           (0, 0), (-1, -1), 0.4, colors.HexColor("#FFCCBC")),
+        ("FONTSIZE",       (0, 1), (-1, -1), 9),
+        ("TOPPADDING",     (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING",  (0, 0), (-1, -1), 5),
+    ]))
+    contenido.append(t)
+
+    doc.build(contenido)
 
 
 # ---------------------------------------------------------------------------
