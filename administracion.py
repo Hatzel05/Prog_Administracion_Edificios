@@ -1,3 +1,4 @@
+import calendar as _cal
 import json
 import os
 import tkinter as tk
@@ -23,8 +24,10 @@ MESES_ES = ["", "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
 CUOTA_BASE = 200   # Aportación fija mensual por departamento para fondo de mejoras
 
 
-ARCHIVO_DATOS  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gastos.json")
-ARCHIVO_PAGOS  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pagos.json")
+ARCHIVO_DATOS        = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gastos.json")
+ARCHIVO_PAGOS        = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pagos.json")
+ARCHIVO_NOTAS        = os.path.join(os.path.dirname(os.path.abspath(__file__)), "notas.json")
+ARCHIVO_SEGUIMIENTO  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "seguimiento_gastos.json")
 
 
 def _abrir_pdf(ruta):
@@ -44,25 +47,174 @@ def _abrir_pdf(ruta):
             pass
 
 
+def _mes_key(reg):
+    """Devuelve 'MM/YYYY' del período al que pertenece el registro."""
+    return reg.get("mes_periodo") or reg["guardado_en"][3:10]
+
+
+class CalendarioPopup(tk.Toplevel):
+    """Popup de calendario para seleccionar una fecha visualmente."""
+
+    _MESES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+              "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
+    _DIAS  = ["Lu", "Ma", "Mi", "Ju", "Vi", "Sá", "Do"]
+
+    def __init__(self, parent, entry):
+        super().__init__(parent)
+        self.entry = entry
+        self.title("Seleccionar fecha")
+        self.resizable(False, False)
+        self.transient(parent)   # asociar con ventana padre
+
+        try:
+            d = datetime.strptime(entry.get().strip(), "%d/%m/%Y")
+            self._año, self._mes = d.year, d.month
+        except ValueError:
+            hoy = date.today()
+            self._año, self._mes = hoy.year, hoy.month
+
+        self._construir()
+        self.update_idletasks()  # calcular tamaño real antes de posicionar
+        self._posicionar()
+        self.lift()
+        self.focus_force()
+        self.after(50, self._activar_grab)
+
+    def _activar_grab(self):
+        """Intenta grab_set una vez que la ventana está visible; reintenta si falla (WSL)."""
+        try:
+            self.grab_set()
+        except tk.TclError:
+            self.after(50, self._activar_grab)
+
+    def _posicionar(self):
+        """Posiciona el popup junto al Entry que lo originó, ajustando si se sale de pantalla."""
+        self.update_idletasks()
+        w = self.winfo_width()
+        h = self.winfo_height()
+
+        ex = self.entry.winfo_rootx()
+        ey = self.entry.winfo_rooty()
+        eh = self.entry.winfo_height()
+
+        sw = self.winfo_screenwidth()
+        sh = self.winfo_screenheight()
+
+        x = ex
+        y = ey + eh + 2          # debajo del entry por defecto
+
+        if x + w > sw:           # se pasa por la derecha
+            x = sw - w - 4
+        if x < 0:
+            x = 4
+        if y + h > sh:           # no cabe abajo → aparece arriba
+            y = ey - h - 2
+        if y < 0:
+            y = 4
+
+        self.geometry(f"+{x}+{y}")
+
+    def _construir(self):
+        # — Encabezado: mes anterior / título / mes siguiente —
+        header = tk.Frame(self, pady=6, padx=8)
+        header.pack(fill="x")
+        tk.Button(header, text="◀", command=self._mes_anterior,
+                  font=("Arial", 10), width=2, cursor="hand2", relief="flat").pack(side="left")
+        self._titulo = tk.Label(header, font=("Arial", 11, "bold"), width=22)
+        self._titulo.pack(side="left", expand=True)
+        tk.Button(header, text="▶", command=self._mes_siguiente,
+                  font=("Arial", 10), width=2, cursor="hand2", relief="flat").pack(side="right")
+
+        # — Nombres de días de la semana —
+        sem_frame = tk.Frame(self, padx=8)
+        sem_frame.pack()
+        for col, nombre in enumerate(self._DIAS):
+            tk.Label(sem_frame, text=nombre, font=("Arial", 9, "bold"),
+                     width=4, anchor="center", fg="#555555").grid(row=0, column=col, padx=1)
+
+        # — Grid de días (se redibuja al cambiar de mes) —
+        self._grid = tk.Frame(self, padx=8, pady=4)
+        self._grid.pack()
+
+        tk.Button(self, text="Cancelar", command=self.destroy,
+                  font=("Arial", 9), cursor="hand2").pack(pady=(0, 8))
+
+        self._dibujar_mes()
+
+    def _dibujar_mes(self):
+        for w in self._grid.winfo_children():
+            w.destroy()
+
+        self._titulo.config(text=f"{self._MESES[self._mes - 1]}   {self._año}")
+        hoy = date.today()
+
+        for fila, semana in enumerate(_cal.monthcalendar(self._año, self._mes)):
+            for col, dia in enumerate(semana):
+                if dia == 0:
+                    tk.Label(self._grid, width=4, height=1).grid(row=fila, column=col, padx=1, pady=1)
+                    continue
+                es_hoy = (dia == hoy.day and self._mes == hoy.month and self._año == hoy.year)
+                btn_kw = dict(
+                    text=str(dia), width=4, height=1,
+                    font=("Arial", 9, "bold" if es_hoy else "normal"),
+                    fg="white" if es_hoy else "black",
+                    activebackground="#1E88E5", activeforeground="white",
+                )
+                if es_hoy:
+                    btn_kw["bg"] = "#1565C0"
+                btn = tk.Button(self._grid, **btn_kw,
+                    relief="flat", cursor="hand2",
+                    command=lambda d=dia: self._seleccionar(d),
+                )
+                btn.grid(row=fila, column=col, padx=1, pady=1)
+
+    def _mes_anterior(self):
+        if self._mes == 1:
+            self._mes, self._año = 12, self._año - 1
+        else:
+            self._mes -= 1
+        self._dibujar_mes()
+
+    def _mes_siguiente(self):
+        if self._mes == 12:
+            self._mes, self._año = 1, self._año + 1
+        else:
+            self._mes += 1
+        self._dibujar_mes()
+
+    def _seleccionar(self, dia):
+        fecha_str = date(self._año, self._mes, dia).strftime("%d/%m/%Y")
+        self.entry.config(state="normal")
+        self.entry.delete(0, tk.END)
+        self.entry.insert(0, fecha_str)
+        self.destroy()
+
+
 class AdministracionApp:
     """Controlador principal: gestiona la ventana y la navegación entre pantallas."""
 
     TAMANIOS = {
-        "MenuPrincipal":   "400x720",
-        "RegistroGastos":  "620x620",
-        "VistaRegistros":  "680x490",
-        "RegistroPagos":   "600x580",
-        "VistaPagos":      "680x490",
-        "SaldosAFavor":    "560x420",
-        "SaldosPendientes":"560x420",
-        "GenerarReporte":  "500x380",
-        "ReporteGastos":   "500x400",
+        "MenuPrincipal":       "400x900",
+        "RegistroGastos":      "620x620",
+        "VistaRegistros":      "680x490",
+        "RegistroPagos":       "600x580",
+        "VistaPagos":          "680x490",
+        "SaldosAFavor":        "560x420",
+        "SaldosPendientes":    "560x420",
+        "GenerarReporte":      "500x380",
+        "ReporteGastos":       "500x400",
+        "Notas":               "560x520",
+        "SinPagarMes":         "420x720",
+        "SeguimientoGastos":   "640x600",
     }
 
     def __init__(self, root):
         self.root = root
         self.root.title("Administración del Edificio")
         self.root.resizable(False, False)
+
+        hoy = date.today()
+        self.mes_activo = (hoy.month, hoy.year)
 
         container = tk.Frame(root)
         container.pack(fill="both", expand=True)
@@ -73,7 +225,8 @@ class AdministracionApp:
         for FrameClass in (MenuPrincipal, RegistroGastos, VistaRegistros,
                            RegistroPagos, VistaPagos,
                            SaldosAFavor, SaldosPendientes, GenerarReporte,
-                           ReporteGastos):
+                           ReporteGastos, Notas, SinPagarMes,
+                           SeguimientoGastos):
             frame = FrameClass(container, self)
             self.frames[FrameClass.__name__] = frame
             frame.grid(row=0, column=0, sticky="nsew")
@@ -81,13 +234,26 @@ class AdministracionApp:
         self.show_frame("MenuPrincipal")
 
     def show_frame(self, name):
-        self.root.geometry(self.TAMANIOS[name])
+        geo = self.TAMANIOS[name]
+        self.root.geometry(geo)
+        self.root.update_idletasks()
+        w, h = map(int, geo.split("x"))
+        sw = self.root.winfo_screenwidth()
+        sh = self.root.winfo_screenheight()
+        x = (sw - w) // 2
+        y = (sh - h) // 2
+        self.root.geometry(f"{geo}+{x}+{y}")
         self.frames[name].tkraise()
         if name in ("VistaRegistros", "VistaPagos", "SaldosAFavor",
-                    "SaldosPendientes", "GenerarReporte", "ReporteGastos"):
+                    "SaldosPendientes", "GenerarReporte", "ReporteGastos",
+                    "Notas", "SinPagarMes", "SeguimientoGastos"):
             self.frames[name].cargar_datos()
         elif name == "RegistroPagos":
             self.frames[name].actualizar_cuota_sugerida()
+        elif name == "RegistroGastos":
+            self.frames[name].actualizar_periodo()
+        elif name == "MenuPrincipal":
+            self.frames["MenuPrincipal"]._actualizar_periodo_label()
 
 
 # ---------------------------------------------------------------------------
@@ -117,7 +283,38 @@ class MenuPrincipal(tk.Frame):
             font=("Arial", 11),
             bg="#F5F5F5",
             fg="#777777",
-        ).pack(pady=(0, 28))
+        ).pack(pady=(0, 8))
+
+        # --- Selector de período activo ---
+        periodo_frame = tk.Frame(self, bg="#F5F5F5")
+        periodo_frame.pack(pady=(0, 4))
+
+        tk.Button(
+            periodo_frame, text="◀", command=self._mes_anterior,
+            font=("Arial", 13, "bold"), bg="#F5F5F5", fg="#1A237E",
+            relief="flat", cursor="hand2", activebackground="#F5F5F5",
+        ).pack(side="left")
+
+        self._periodo_label = tk.Label(
+            periodo_frame, text="",
+            font=("Arial", 13, "bold"),
+            bg="#E8EAF6", fg="#1A237E",
+            width=18, padx=10, pady=5,
+        )
+        self._periodo_label.pack(side="left", padx=6)
+
+        tk.Button(
+            periodo_frame, text="▶", command=self._mes_siguiente,
+            font=("Arial", 13, "bold"), bg="#F5F5F5", fg="#1A237E",
+            relief="flat", cursor="hand2", activebackground="#F5F5F5",
+        ).pack(side="left")
+
+        tk.Label(
+            self, text="Período de trabajo activo",
+            font=("Arial", 8), bg="#F5F5F5", fg="#9E9E9E",
+        ).pack(pady=(0, 12))
+
+        self._actualizar_periodo_label()
 
         tk.Button(
             self,
@@ -239,6 +436,65 @@ class MenuPrincipal(tk.Frame):
             relief="flat",
         ).pack(pady=8)
 
+        tk.Button(
+            self,
+            text="Sin pagar este mes",
+            command=lambda: self.controller.show_frame("SinPagarMes"),
+            font=("Arial", 12, "bold"),
+            bg="#E65100",
+            fg="white",
+            activebackground="#BF360C",
+            activeforeground="white",
+            width=26,
+            height=2,
+            cursor="hand2",
+            relief="flat",
+        ).pack(pady=8)
+
+        tk.Button(
+            self,
+            text="Notas y recordatorios",
+            command=lambda: self.controller.show_frame("Notas"),
+            font=("Arial", 12, "bold"),
+            bg="#4527A0",
+            fg="white",
+            activebackground="#311B92",
+            activeforeground="white",
+            width=26,
+            height=2,
+            cursor="hand2",
+            relief="flat",
+        ).pack(pady=8)
+
+        tk.Button(
+            self,
+            text="Gastos del Mes — Seguimiento",
+            command=lambda: self.controller.show_frame("SeguimientoGastos"),
+            font=("Arial", 12, "bold"),
+            bg="#00838F",
+            fg="white",
+            activebackground="#006064",
+            activeforeground="white",
+            width=26,
+            height=2,
+            cursor="hand2",
+            relief="flat",
+        ).pack(pady=8)
+
+    def _actualizar_periodo_label(self):
+        m, y = self.controller.mes_activo
+        self._periodo_label.config(text=f"{MESES_ES[m]}  {y}")
+
+    def _mes_anterior(self):
+        m, y = self.controller.mes_activo
+        self.controller.mes_activo = (12, y - 1) if m == 1 else (m - 1, y)
+        self._actualizar_periodo_label()
+
+    def _mes_siguiente(self):
+        m, y = self.controller.mes_activo
+        self.controller.mes_activo = (1, y + 1) if m == 12 else (m + 1, y)
+        self._actualizar_periodo_label()
+
 
 # ---------------------------------------------------------------------------
 # Pantalla: Registro de gastos
@@ -271,8 +527,10 @@ class RegistroGastos(tk.Frame):
 
         # --- Encabezado ---
         tk.Label(self, text="Registro de Gastos", font=("Arial", 16, "bold")).pack(
-            pady=(4, 8)
+            pady=(4, 2)
         )
+        self.periodo_label = tk.Label(self, text="—", font=("Arial", 10), fg="#1A237E")
+        self.periodo_label.pack(pady=(0, 8))
 
         # --- Formulario ---
         form = tk.Frame(self, padx=24, pady=8)
@@ -407,32 +665,20 @@ class RegistroGastos(tk.Frame):
         self.concepto_combo.focus()
 
     def _crear_campo_fecha(self, parent, row):
-        entry = tk.Entry(parent, font=("Arial", 11), width=28)
+        entry = tk.Entry(parent, font=("Arial", 11), width=14)
         entry.insert(0, date.today().strftime("%d/%m/%Y"))
-        entry.config(state="readonly")
         entry.grid(row=row, column=1, padx=10, pady=6, sticky="w")
 
-        def toggle():
-            if str(entry.cget("state")) == "normal":
-                entry.config(state="readonly")
-                btn.config(text="Editar")
-            else:
-                entry.config(state="normal")
-                btn.config(text="Bloquear")
-                entry.focus()
-
         btn = tk.Button(
-            parent, text="Editar", command=toggle, font=("Arial", 9), width=7, cursor="hand2"
+            parent, text="Cal", command=lambda: CalendarioPopup(self, entry),
+            font=("Arial", 11), width=3, cursor="hand2", relief="flat",
         )
         btn.grid(row=row, column=2, padx=(0, 10), pady=6)
         return entry, btn
 
     def _resetear_campo_fecha(self, entry, btn):
-        entry.config(state="normal")
         entry.delete(0, tk.END)
         entry.insert(0, date.today().strftime("%d/%m/%Y"))
-        entry.config(state="readonly")
-        btn.config(text="Editar")
 
     def _on_concepto_select(self, event=None):
         if self.concepto_var.get() == "Otros":
@@ -497,14 +743,14 @@ class RegistroGastos(tk.Frame):
             messagebox.showwarning("Sin datos", "No hay gastos para reportar.")
             return
 
-        hoy = date.today()
-        mes_label = f"{MESES_ES[hoy.month]} {hoy.year}"
+        m, y = self.controller.mes_activo
+        mes_label = f"{MESES_ES[m]} {y}"
 
         def _generar():
             try:
                 carpeta = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reportes")
                 os.makedirs(carpeta, exist_ok=True)
-                nombre = f"gastos_{hoy.strftime('%m_%Y')}_{datetime.now().strftime('%H%M%S')}.pdf"
+                nombre = f"gastos_{m:02d}_{y}_{datetime.now().strftime('%H%M%S')}.pdf"
                 ruta = os.path.join(carpeta, nombre)
                 _construir_pdf_gastos(ruta, mes_label, self.gastos)
                 messagebox.showinfo("PDF generado", f"Reporte guardado en:\n{ruta}")
@@ -514,14 +760,20 @@ class RegistroGastos(tk.Frame):
 
         _abrir_preview_gastos(self, mes_label, self.gastos, _generar)
 
+    def actualizar_periodo(self):
+        m, y = self.controller.mes_activo
+        self.periodo_label.config(text=f"Período: {MESES_ES[m]} {y}")
+
     def _guardar_registros(self):
         if not self.gastos:
             messagebox.showwarning("Sin datos", "No hay gastos para guardar.")
             return
 
+        m, y = self.controller.mes_activo
         total = sum(g["monto"] for g in self.gastos)
         registro = {
             "guardado_en": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+            "mes_periodo": f"{m:02d}/{y}",
             "gastos": list(self.gastos),
             "total": total,
             "cuota_por_depto": total / 20,
@@ -852,7 +1104,9 @@ class RegistroPagos(tk.Frame):
             font=("Arial", 9), relief="flat", cursor="hand2", fg="#1565C0",
         ).pack(side="left")
 
-        tk.Label(self, text="Registro de Pagos", font=("Arial", 16, "bold")).pack(pady=(4, 6))
+        tk.Label(self, text="Registro de Pagos", font=("Arial", 16, "bold")).pack(pady=(4, 2))
+        self.periodo_label = tk.Label(self, text="—", font=("Arial", 10), fg="#1A237E")
+        self.periodo_label.pack(pady=(0, 4))
 
         # --- Cuota del período (solo lectura, tomada del último registro de gastos) ---
         self.cuota_valor = 0.0
@@ -890,12 +1144,22 @@ class RegistroPagos(tk.Frame):
         tk.Label(form, text="Monto pagado ($):", font=("Arial", 11), width=14, anchor="w").grid(
             row=2, column=0, pady=6, sticky="w"
         )
+        monto_row = tk.Frame(form)
+        monto_row.grid(row=2, column=1, padx=10, pady=6, sticky="w")
+
         self.monto_pago_var = tk.StringVar()
         self.monto_pago_entry = tk.Entry(
-            form, textvariable=self.monto_pago_var, font=("Arial", 11), width=22
+            monto_row, textvariable=self.monto_pago_var, font=("Arial", 11), width=15,
+            state="readonly",
         )
-        self.monto_pago_entry.grid(row=2, column=1, padx=10, pady=6, sticky="w")
+        self.monto_pago_entry.pack(side="left")
         self.monto_pago_var.trace_add("write", lambda *_: self._actualizar_saldo_label())
+
+        self.monto_total_var = tk.BooleanVar(value=True)
+        tk.Checkbutton(
+            monto_row, text="Monto total", variable=self.monto_total_var,
+            command=self._toggle_monto_pago, font=("Arial", 10),
+        ).pack(side="left", padx=(8, 0))
 
         self.saldo_label = tk.Label(form, text="", font=("Arial", 10, "italic"), anchor="w")
         self.saldo_label.grid(row=3, column=1, padx=10, sticky="w")
@@ -931,6 +1195,20 @@ class RegistroPagos(tk.Frame):
         self.tabla.tag_configure("pendiente", foreground="#C62828")
         self.tabla.pack(fill="both", expand=True)
 
+        # --- Botones de acción sobre la tabla ---
+        acc_frame = tk.Frame(tabla_frame)
+        acc_frame.pack(anchor="e", pady=(4, 0))
+        tk.Button(
+            acc_frame, text="Editar", command=self._editar_pago,
+            font=("Arial", 10), width=8, cursor="hand2",
+            bg="#E65100", fg="white", activebackground="#BF360C", activeforeground="white",
+        ).pack(side="left", padx=(0, 6))
+        tk.Button(
+            acc_frame, text="Eliminar", command=self._eliminar_pago,
+            font=("Arial", 10), width=8, cursor="hand2",
+            bg="#C62828", fg="white", activebackground="#B71C1C", activeforeground="white",
+        ).pack(side="left")
+
         # --- Totales ---
         self.total_pago_label = tk.Label(
             self, text="Total recaudado:  $0.00", font=("Arial", 12, "bold"), anchor="e"
@@ -954,41 +1232,34 @@ class RegistroPagos(tk.Frame):
     # --- Campo de fecha reutilizable ---
 
     def _crear_campo_fecha(self, parent, row):
-        entry = tk.Entry(parent, font=("Arial", 11), width=18)
+        entry = tk.Entry(parent, font=("Arial", 11), width=14)
         entry.insert(0, date.today().strftime("%d/%m/%Y"))
-        entry.config(state="readonly")
         entry.grid(row=row, column=1, padx=10, pady=6, sticky="w")
 
-        def toggle():
-            if str(entry.cget("state")) == "normal":
-                entry.config(state="readonly")
-                btn.config(text="Editar")
-            else:
-                entry.config(state="normal")
-                btn.config(text="Bloquear")
-                entry.focus()
-
         btn = tk.Button(
-            parent, text="Editar", command=toggle, font=("Arial", 9), width=7, cursor="hand2"
+            parent, text="Cal", command=lambda: CalendarioPopup(self, entry),
+            font=("Arial", 11), width=3, cursor="hand2", relief="flat",
         )
         btn.grid(row=row, column=2, padx=(0, 10), pady=6)
         return entry, btn
 
     def _resetear_campo_fecha(self, entry, btn):
-        entry.config(state="normal")
         entry.delete(0, tk.END)
         entry.insert(0, date.today().strftime("%d/%m/%Y"))
-        entry.config(state="readonly")
-        btn.config(text="Editar")
 
     # --- Sugerencia de cuota ---
 
     def actualizar_cuota_sugerida(self):
-        """Carga la cuota del último registro de gastos guardado (siempre refresca)."""
+        """Carga la cuota del último registro de gastos del período activo."""
+        m, y = self.controller.mes_activo
+        mes_key = f"{m:02d}/{y}"
+        self.periodo_label.config(text=f"Período: {MESES_ES[m]} {y}")
+
         if not os.path.exists(ARCHIVO_DATOS):
             self.cuota_valor = CUOTA_BASE
             self.cuota_display.config(text=f"${CUOTA_BASE:,.2f}", fg="#1A237E")
             self.cuota_origen.config(text="(solo cuota base, sin gastos registrados)")
+            self._sincronizar_monto_total()
             return
         with open(ARCHIVO_DATOS, "r", encoding="utf-8") as f:
             datos = json.load(f)
@@ -996,8 +1267,18 @@ class RegistroPagos(tk.Frame):
             self.cuota_valor = CUOTA_BASE
             self.cuota_display.config(text=f"${CUOTA_BASE:,.2f}", fg="#1A237E")
             self.cuota_origen.config(text="(solo cuota base, sin gastos registrados)")
+            self._sincronizar_monto_total()
             return
-        ultimo = datos[-1]
+
+        # Preferir el último registro del mes activo; si no hay, usar el más reciente
+        datos_mes = [r for r in datos if _mes_key(r) == mes_key]
+        if datos_mes:
+            ultimo = datos_mes[-1]
+            origen_nota = ""
+        else:
+            ultimo = datos[-1]
+            origen_nota = f" ⚠ (sin gastos para {MESES_ES[m]} {y})"
+
         tiene_fondo = any(
             g["concepto"] == "Fondo de ahorro" for g in ultimo.get("gastos", [])
         )
@@ -1008,7 +1289,27 @@ class RegistroPagos(tk.Frame):
         self.cuota_display.config(
             text=f"${self.cuota_valor:,.2f}", fg="#1A237E"
         )
-        self.cuota_origen.config(text=f"(guardado el {ultimo['guardado_en']})")
+        self.cuota_origen.config(text=f"(guardado el {ultimo['guardado_en']}){origen_nota}")
+        self._sincronizar_monto_total()
+
+    # --- Checkbox monto total ---
+
+    def _toggle_monto_pago(self):
+        if self.monto_total_var.get():
+            self.monto_pago_entry.config(state="normal")
+            self.monto_pago_var.set(f"{self.cuota_valor:.2f}")
+            self.monto_pago_entry.config(state="readonly")
+        else:
+            self.monto_pago_entry.config(state="normal")
+            self.monto_pago_var.set("")
+            self.monto_pago_entry.focus()
+
+    def _sincronizar_monto_total(self):
+        """Si el checkbox está marcado, actualiza el entry con la cuota vigente."""
+        if self.monto_total_var.get():
+            self.monto_pago_entry.config(state="normal")
+            self.monto_pago_var.set(f"{self.cuota_valor:.2f}")
+            self.monto_pago_entry.config(state="readonly")
 
     # --- Saldo dinámico ---
 
@@ -1059,17 +1360,135 @@ class RegistroPagos(tk.Frame):
         self.tabla.insert("", "end", values=(fecha, depto, f"${monto:,.2f}", saldo_str),
                           tags=(tag,) if tag else ())
 
-        total = sum(p["monto_pagado"] for p in self.pagos)
-        a_favor    = sum(1 for p in self.pagos if p["saldo"] > 0)
-        pendientes = sum(1 for p in self.pagos if p["saldo"] < 0)
-        self.total_pago_label.config(text=f"Total recaudado:  ${total:,.2f}")
-        self.resumen_label.config(text=f"A favor: {a_favor}   |   Pendientes: {pendientes}")
+        self._actualizar_totales()
 
         self.depto_var.set("")
         self._resetear_campo_fecha(self.fecha_pago_entry, self.fecha_pago_btn)
         self.monto_pago_var.set("")
         self.saldo_label.config(text="", fg="#555555")
         self.depto_combo.focus()
+
+    # --- Helpers de tabla ---
+
+    def _actualizar_totales(self):
+        total      = sum(p["monto_pagado"] for p in self.pagos)
+        a_favor    = sum(1 for p in self.pagos if p["saldo"] > 0)
+        pendientes = sum(1 for p in self.pagos if p["saldo"] < 0)
+        self.total_pago_label.config(text=f"Total recaudado:  ${total:,.2f}")
+        self.resumen_label.config(text=f"A favor: {a_favor}   |   Pendientes: {pendientes}")
+
+    def _eliminar_pago(self):
+        sel = self.tabla.selection()
+        if not sel:
+            messagebox.showwarning("Nada seleccionado", "Selecciona un pago de la tabla para eliminar.")
+            return
+        iid = sel[0]
+        idx = self.tabla.index(iid)
+        depto = self.pagos[idx]["departamento"]
+        if not messagebox.askyesno("Eliminar pago", f"¿Eliminar el pago de '{depto}'?"):
+            return
+        self.tabla.delete(iid)
+        del self.pagos[idx]
+        self._actualizar_totales()
+
+    def _editar_pago(self):
+        sel = self.tabla.selection()
+        if not sel:
+            messagebox.showwarning("Nada seleccionado", "Selecciona un pago de la tabla para editar.")
+            return
+        iid = sel[0]
+        idx = self.tabla.index(iid)
+        pago = self.pagos[idx]
+
+        dlg = tk.Toplevel(self)
+        dlg.title("Editar pago")
+        dlg.geometry("400x270")
+        dlg.resizable(False, False)
+        dlg.wait_visibility()
+        dlg.grab_set()
+
+        form = tk.Frame(dlg, padx=20, pady=16)
+        form.pack(fill="both", expand=True)
+
+        tk.Label(form, text="Departamento:", font=("Arial", 11), width=14, anchor="w").grid(
+            row=0, column=0, pady=6, sticky="w"
+        )
+        depto_combo = ttk.Combobox(
+            form, values=self.DEPARTAMENTOS, font=("Arial", 11), width=18, state="readonly"
+        )
+        depto_combo.set(pago["departamento"])
+        depto_combo.grid(row=0, column=1, pady=6, sticky="w")
+
+        tk.Label(form, text="Fecha:", font=("Arial", 11), width=14, anchor="w").grid(
+            row=1, column=0, pady=6, sticky="w"
+        )
+        fecha_entry = tk.Entry(form, font=("Arial", 11), width=14)
+        fecha_entry.insert(0, pago.get("fecha", date.today().strftime("%d/%m/%Y")))
+        fecha_entry.grid(row=1, column=1, pady=6, sticky="w")
+        tk.Button(
+            form, text="Cal", command=lambda: CalendarioPopup(dlg, fecha_entry),
+            font=("Arial", 11), width=3, cursor="hand2", relief="flat",
+        ).grid(row=1, column=2, padx=(4, 0), pady=6)
+
+        tk.Label(form, text="Monto pagado ($):", font=("Arial", 11), width=14, anchor="w").grid(
+            row=2, column=0, pady=6, sticky="w"
+        )
+        monto_entry = tk.Entry(form, font=("Arial", 11), width=20)
+        monto_entry.insert(0, str(pago["monto_pagado"]))
+        monto_entry.grid(row=2, column=1, pady=6, sticky="w")
+
+        saldo_lbl = tk.Label(form, text="", font=("Arial", 10, "italic"), anchor="w")
+        saldo_lbl.grid(row=3, column=1, sticky="w")
+
+        def actualizar_saldo(*_):
+            try:
+                s = float(monto_entry.get()) - self.cuota_valor
+                if s > 0:
+                    saldo_lbl.config(text=f"+${s:,.2f}  (a favor)", fg="#2E7D32")
+                elif s < 0:
+                    saldo_lbl.config(text=f"-${abs(s):,.2f}  (pendiente)", fg="#C62828")
+                else:
+                    saldo_lbl.config(text="$0.00  (exacto)", fg="#555555")
+            except ValueError:
+                saldo_lbl.config(text="")
+
+        monto_entry.bind("<KeyRelease>", actualizar_saldo)
+        actualizar_saldo()
+
+        def guardar():
+            nuevo_depto = depto_combo.get()
+            nueva_fecha = fecha_entry.get().strip()
+            if not nuevo_depto or not nueva_fecha:
+                messagebox.showerror("Campo requerido", "Todos los campos son obligatorios.", parent=dlg)
+                return
+            try:
+                nuevo_monto = float(monto_entry.get())
+                if nuevo_monto <= 0:
+                    raise ValueError
+            except ValueError:
+                messagebox.showerror("Monto inválido", "Ingresa un monto decimal positivo.", parent=dlg)
+                return
+            nuevo_saldo = nuevo_monto - self.cuota_valor
+            self.pagos[idx] = {
+                "fecha": nueva_fecha, "departamento": nuevo_depto,
+                "monto_pagado": nuevo_monto, "saldo": nuevo_saldo,
+            }
+            saldo_str = f"+${nuevo_saldo:,.2f}" if nuevo_saldo >= 0 else f"-${abs(nuevo_saldo):,.2f}"
+            tag = "afavor" if nuevo_saldo > 0 else ("pendiente" if nuevo_saldo < 0 else "")
+            self.tabla.item(iid, values=(nueva_fecha, nuevo_depto, f"${nuevo_monto:,.2f}", saldo_str),
+                            tags=(tag,) if tag else ())
+            self._actualizar_totales()
+            dlg.destroy()
+
+        btn_row = tk.Frame(form)
+        btn_row.grid(row=4, column=0, columnspan=3, pady=(12, 0), sticky="e")
+        tk.Button(btn_row, text="Guardar", command=guardar,
+                  font=("Arial", 11, "bold"), bg="#1565C0", fg="white",
+                  activebackground="#0D47A1", activeforeground="white", width=10, cursor="hand2",
+                  ).pack(side="left", padx=(0, 8))
+        tk.Button(btn_row, text="Cancelar", command=dlg.destroy,
+                  font=("Arial", 10), width=10, cursor="hand2",
+                  ).pack(side="left")
 
     # --- Guardar ---
 
@@ -1078,9 +1497,11 @@ class RegistroPagos(tk.Frame):
             messagebox.showwarning("Sin datos", "No hay pagos para guardar.")
             return
 
+        m, y = self.controller.mes_activo
         total = sum(p["monto_pagado"] for p in self.pagos)
         registro = {
             "guardado_en":    datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+            "mes_periodo":    f"{m:02d}/{y}",
             "cuota_periodo":  self.cuota_valor,
             "pagos":          list(self.pagos),
             "total_recaudado": total,
@@ -1294,9 +1715,13 @@ class VistaPagos(tk.Frame):
         tk.Label(form, text="Fecha:", font=("Arial", 11), width=14, anchor="w").grid(
             row=1, column=0, pady=6, sticky="w"
         )
-        fecha_entry = tk.Entry(form, font=("Arial", 11), width=20)
+        fecha_entry = tk.Entry(form, font=("Arial", 11), width=14)
         fecha_entry.insert(0, pago.get("fecha", date.today().strftime("%d/%m/%Y")))
         fecha_entry.grid(row=1, column=1, pady=6, sticky="w")
+        tk.Button(
+            form, text="Cal", command=lambda: CalendarioPopup(dlg, fecha_entry),
+            font=("Arial", 11), width=3, cursor="hand2", relief="flat",
+        ).grid(row=1, column=2, padx=(0, 10), pady=6)
 
         tk.Label(form, text="Monto pagado ($):", font=("Arial", 11), width=14, anchor="w").grid(
             row=2, column=0, pady=6, sticky="w"
@@ -1435,11 +1860,11 @@ class _BaseResumenSaldos(tk.Frame):
 
         # Filtrar según el tipo de frame
         if self.SOLO_POSITIVOS:
-            filtrados = {d: v for d, v in acumulado.items() if v["saldo_neto"] > 0}
+            filtrados = {d: v for d, v in acumulado.items() if v["saldo_neto"] > 0.005}
             ordenados = sorted(filtrados.items(), key=lambda x: x[1]["saldo_neto"], reverse=True)
             tag, color = "afavor", "#2E7D32"
         else:
-            filtrados = {d: v for d, v in acumulado.items() if v["saldo_neto"] < 0}
+            filtrados = {d: v for d, v in acumulado.items() if v["saldo_neto"] < -0.005}
             ordenados = sorted(filtrados.items(), key=lambda x: x[1]["saldo_neto"])
             tag, color = "pendiente", "#C62828"
 
@@ -1539,7 +1964,7 @@ class GenerarReporte(tk.Frame):
         if os.path.exists(ARCHIVO_DATOS):
             with open(ARCHIVO_DATOS, "r", encoding="utf-8") as f:
                 for reg in json.load(f):
-                    mk = reg["guardado_en"][3:10]   # "MM/YYYY"
+                    mk = _mes_key(reg)
                     if mk not in meses:
                         mes_n = int(mk[:2])
                         meses[mk] = f"{MESES_ES[mes_n]} {mk[3:]}"
@@ -1566,13 +1991,13 @@ class GenerarReporte(tk.Frame):
         if os.path.exists(ARCHIVO_DATOS):
             with open(ARCHIVO_DATOS, "r", encoding="utf-8") as f:
                 for reg in json.load(f):
-                    if reg["guardado_en"][3:10] == mk:
+                    if _mes_key(reg) == mk:
                         n_gastos += len(reg["gastos"])
 
         if os.path.exists(ARCHIVO_PAGOS):
             with open(ARCHIVO_PAGOS, "r", encoding="utf-8") as f:
                 for reg in json.load(f):
-                    if reg["guardado_en"][3:10] == mk:
+                    if _mes_key(reg) == mk:
                         n_pagos += 1
                         n_deptos += len(reg["pagos"])
 
@@ -1608,13 +2033,13 @@ class GenerarReporte(tk.Frame):
         if os.path.exists(ARCHIVO_DATOS):
             with open(ARCHIVO_DATOS, "r", encoding="utf-8") as f:
                 for reg in json.load(f):
-                    if reg["guardado_en"][3:10] == mk:
+                    if _mes_key(reg) == mk:
                         gastos_mes.append(reg)
 
         if os.path.exists(ARCHIVO_PAGOS):
             with open(ARCHIVO_PAGOS, "r", encoding="utf-8") as f:
                 for reg in json.load(f):
-                    if reg["guardado_en"][3:10] == mk:
+                    if _mes_key(reg) == mk:
                         pagos_mes.append(reg)
 
         if not gastos_mes and not pagos_mes:
@@ -1902,7 +2327,7 @@ class ReporteGastos(tk.Frame):
         if os.path.exists(ARCHIVO_DATOS):
             with open(ARCHIVO_DATOS, "r", encoding="utf-8") as f:
                 for reg in json.load(f):
-                    mk = reg["guardado_en"][3:10]
+                    mk = _mes_key(reg)
                     if mk not in meses:
                         mes_n = int(mk[:2])
                         meses[mk] = f"{MESES_ES[mes_n]} {mk[3:]}"
@@ -1927,7 +2352,7 @@ class ReporteGastos(tk.Frame):
         if os.path.exists(ARCHIVO_DATOS):
             with open(ARCHIVO_DATOS, "r", encoding="utf-8") as f:
                 for reg in json.load(f):
-                    if reg["guardado_en"][3:10] == mk:
+                    if _mes_key(reg) == mk:
                         n += len(reg["gastos"])
         self.info_label.config(text=f"  Gastos registrados: {n} concepto(s)")
 
@@ -1951,7 +2376,7 @@ class ReporteGastos(tk.Frame):
         if os.path.exists(ARCHIVO_DATOS):
             with open(ARCHIVO_DATOS, "r", encoding="utf-8") as f:
                 for reg in json.load(f):
-                    if reg["guardado_en"][3:10] == mk:
+                    if _mes_key(reg) == mk:
                         gastos_lista.extend(reg["gastos"])
 
         if not gastos_lista:
@@ -2040,6 +2465,672 @@ def _construir_pdf_gastos(ruta, mes_label, gastos_lista):
     contenido.append(t)
 
     doc.build(contenido)
+
+
+# ---------------------------------------------------------------------------
+# Pantalla: Notas
+# ---------------------------------------------------------------------------
+
+class Notas(tk.Frame):
+    def __init__(self, parent, controller):
+        super().__init__(parent)
+        self.controller = controller
+        self._construir_ui()
+
+    def _construir_ui(self):
+        topbar = tk.Frame(self, pady=4)
+        topbar.pack(fill="x", padx=8)
+        tk.Button(
+            topbar, text="← Volver",
+            command=lambda: self.controller.show_frame("MenuPrincipal"),
+            font=("Arial", 9), relief="flat", cursor="hand2", fg="#1565C0",
+        ).pack(side="left")
+
+        tk.Label(self, text="Notas y recordatorios", font=("Arial", 15, "bold")).pack(pady=(4, 8))
+
+        # --- Entrada de nota ---
+        entrada_frame = tk.Frame(self, padx=20)
+        entrada_frame.pack(fill="x")
+        tk.Label(entrada_frame, text="Nueva nota:", font=("Arial", 11), anchor="w").pack(anchor="w")
+        self.texto_nota = tk.Text(entrada_frame, font=("Arial", 11), height=4, wrap="word",
+                                  relief="solid", bd=1)
+        self.texto_nota.pack(fill="x", pady=(4, 6))
+        tk.Button(
+            entrada_frame, text="Agregar nota", command=self._agregar_nota,
+            font=("Arial", 11, "bold"), bg="#1565C0", fg="white",
+            activebackground="#0D47A1", activeforeground="white", cursor="hand2", width=14,
+        ).pack(anchor="e")
+
+        ttk.Separator(self, orient="horizontal").pack(fill="x", padx=20, pady=10)
+
+        # --- Lista de notas ---
+        lista_frame = tk.Frame(self, padx=20)
+        lista_frame.pack(fill="both", expand=True)
+        tk.Label(lista_frame, text="Notas guardadas", font=("Arial", 11, "bold")).pack(anchor="w", pady=(0, 4))
+
+        cols = ("fecha", "nota")
+        self.tree = ttk.Treeview(lista_frame, columns=cols, show="headings", height=8)
+        self.tree.heading("fecha", text="Fecha")
+        self.tree.heading("nota",  text="Nota")
+        self.tree.column("fecha", width=130, anchor="center")
+        self.tree.column("nota",  width=380, anchor="w")
+        sb = ttk.Scrollbar(lista_frame, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=sb.set)
+        self.tree.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y")
+
+        tk.Button(
+            self, text="Eliminar seleccionada", command=self._eliminar_nota,
+            font=("Arial", 10), bg="#C62828", fg="white",
+            activebackground="#B71C1C", activeforeground="white", cursor="hand2",
+        ).pack(anchor="e", padx=20, pady=(8, 10))
+
+        self._cargar_notas()
+
+    def _leer_notas(self):
+        if not os.path.exists(ARCHIVO_NOTAS):
+            return []
+        with open(ARCHIVO_NOTAS, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    def _guardar_notas(self, notas):
+        with open(ARCHIVO_NOTAS, "w", encoding="utf-8") as f:
+            json.dump(notas, f, ensure_ascii=False, indent=2)
+
+    def _cargar_notas(self):
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        for n in self._leer_notas():
+            self.tree.insert("", "end", values=(n["fecha"], n["texto"]))
+
+    def _agregar_nota(self):
+        texto = self.texto_nota.get("1.0", "end").strip()
+        if not texto:
+            messagebox.showwarning("Campo vacío", "Escribe una nota antes de agregar.")
+            return
+        notas = self._leer_notas()
+        nueva = {"fecha": datetime.now().strftime("%d/%m/%Y %H:%M"), "texto": texto}
+        notas.append(nueva)
+        self._guardar_notas(notas)
+        self.texto_nota.delete("1.0", "end")
+        self._cargar_notas()
+
+    def _eliminar_nota(self):
+        sel = self.tree.selection()
+        if not sel:
+            messagebox.showwarning("Nada seleccionado", "Selecciona una nota para eliminar.")
+            return
+        idx = self.tree.index(sel[0])
+        notas = self._leer_notas()
+        texto = notas[idx]["texto"][:60]
+        if not messagebox.askyesno("Eliminar nota", f"¿Eliminar esta nota?\n\n«{texto}»"):
+            return
+        del notas[idx]
+        self._guardar_notas(notas)
+        self._cargar_notas()
+
+    def cargar_datos(self):
+        self._cargar_notas()
+
+
+# ---------------------------------------------------------------------------
+# Pantalla: Sin pagar este mes
+# ---------------------------------------------------------------------------
+
+class SinPagarMes(tk.Frame):
+    """
+    Muestra gráficamente qué departamentos no han pagado en la sesión más reciente.
+    Cada piso tiene 4 deptos en las esquinas de un cuadrado, numerados en sentido
+    horario desde la esquina superior-derecha:
+      TL(+3) | TR(+0)
+      BL(+2) | BR(+1)
+    Pisos (de abajo hacia arriba):  Piso 1 = deptos 17-20, … Piso 5 = deptos 33-36.
+    """
+
+    # Clockwise desde TR: offset 0→TR, 1→BR, 2→BL, 3→TL
+    _COLOR_PAGADO   = "#2E7D32"
+    _COLOR_NOPAGADO = "#C62828"
+    _COLOR_SIN_DATO = "#9E9E9E"
+    _R    = 24    # radio del círculo
+    _CW   = 360   # ancho del canvas por piso
+    _CH   = 120   # alto del canvas por piso
+    _PADX = 64    # margen horizontal al centro del círculo
+    _PADY = 22    # margen vertical al centro del círculo
+
+    def __init__(self, parent, controller):
+        super().__init__(parent)
+        self.controller = controller
+        self._construir_ui()
+
+    def _construir_ui(self):
+        topbar = tk.Frame(self, pady=4)
+        topbar.pack(fill="x", padx=8)
+        tk.Button(
+            topbar, text="← Volver",
+            command=lambda: self.controller.show_frame("MenuPrincipal"),
+            font=("Arial", 9), relief="flat", cursor="hand2", fg="#1565C0",
+        ).pack(side="left")
+        tk.Button(
+            topbar, text="↺ Actualizar",
+            command=self.cargar_datos,
+            font=("Arial", 9), relief="flat", cursor="hand2", fg="#555555",
+        ).pack(side="right")
+
+        self.titulo_label = tk.Label(self, text="Sin pagar este mes", font=("Arial", 15, "bold"))
+        self.titulo_label.pack(pady=(4, 2))
+        self.subtitulo = tk.Label(self, text="—", font=("Arial", 10), fg="#777777")
+        self.subtitulo.pack(pady=(0, 6))
+
+        # Leyenda
+        leyenda = tk.Frame(self)
+        leyenda.pack()
+        for color, etiqueta in [(self._COLOR_PAGADO, "Pagado"),
+                                 (self._COLOR_NOPAGADO, "Sin pagar"),
+                                 (self._COLOR_SIN_DATO, "Sin registro")]:
+            tk.Canvas(leyenda, width=14, height=14, bg=color,
+                      highlightthickness=0).pack(side="left", padx=(8, 2))
+            tk.Label(leyenda, text=etiqueta, font=("Arial", 9)).pack(side="left", padx=(0, 8))
+
+        ttk.Separator(self, orient="horizontal").pack(fill="x", padx=20, pady=6)
+
+        # Contenedor scrollable de pisos
+        outer = tk.Frame(self)
+        outer.pack(fill="both", expand=True, padx=20)
+        canvas_scroll = tk.Canvas(outer, highlightthickness=0)
+        sb = ttk.Scrollbar(outer, orient="vertical", command=canvas_scroll.yview)
+        canvas_scroll.configure(yscrollcommand=sb.set)
+        canvas_scroll.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y")
+
+        self._pisos_frame = tk.Frame(canvas_scroll)
+        self._pisos_frame.bind(
+            "<Configure>",
+            lambda e: canvas_scroll.configure(scrollregion=canvas_scroll.bbox("all"))
+        )
+        canvas_scroll.create_window((0, 0), window=self._pisos_frame, anchor="nw")
+
+        self.resumen_label = tk.Label(
+            self, text="", font=("Arial", 11, "bold"), anchor="e"
+        )
+        self.resumen_label.pack(fill="x", padx=24, pady=(6, 10))
+
+    def cargar_datos(self):
+        for w in self._pisos_frame.winfo_children():
+            w.destroy()
+
+        m, y = self.controller.mes_activo
+        self.titulo_label.config(text=f"Sin pagar — {MESES_ES[m]} {y}")
+
+        pagados = set()
+        sesion_label = "Sin sesiones guardadas"
+        hay_datos = False
+
+        if os.path.exists(ARCHIVO_PAGOS):
+            with open(ARCHIVO_PAGOS, "r", encoding="utf-8") as f:
+                datos = json.load(f)
+            sesiones_mes = []
+            for reg in datos:
+                try:
+                    mk = _mes_key(reg)
+                    if int(mk[:2]) == m and int(mk[3:]) == y:
+                        sesiones_mes.append(reg)
+                        for p in reg["pagos"]:
+                            pagados.add(p["departamento"])
+                except (ValueError, KeyError):
+                    pass
+            if sesiones_mes:
+                hay_datos = True
+                sesion_label = (f"{len(sesiones_mes)} sesión(es) registrada(s) "
+                                f"— {MESES_ES[m]} {y}")
+            elif datos:
+                ultima = datos[-1]
+                sesion_label = f"Última sesión disponible: {ultima['guardado_en']}"
+                for p in ultima["pagos"]:
+                    pagados.add(p["departamento"])
+                hay_datos = True
+
+        self.subtitulo.config(text=sesion_label)
+
+        todos = [f"Depto {i}" for i in range(17, 37)]
+        sin_pagar = [d for d in todos if d not in pagados]
+
+        # Dibujar pisos de mayor a menor (piso 5 arriba, piso 1 abajo)
+        R, CW, CH = self._R, self._CW, self._CH
+        PX, PY = self._PADX, self._PADY
+        # Centros de cada círculo: clockwise desde TR
+        # offset 0=TR, 1=BR, 2=BL, 3=TL
+        esquinas = {
+            0: (CW - PX, PY),       # TR
+            1: (CW - PX, CH - PY),  # BR
+            2: (PX,      CH - PY),  # BL
+            3: (PX,      PY),       # TL
+        }
+
+        for piso in range(5, 0, -1):
+            base = 17 + (piso - 1) * 4
+            deptos_piso = [f"Depto {base + k}" for k in range(4)]
+
+            piso_frame = tk.Frame(self._pisos_frame, bd=1, relief="groove", padx=6, pady=6)
+            piso_frame.pack(fill="x", pady=4)
+
+            cv = tk.Canvas(piso_frame, width=CW, height=CH, bg="#FAFAFA",
+                           highlightthickness=0)
+            cv.pack()
+
+            # Rectángulo cuyos vértices coinciden con los centros de los círculos
+            cv.create_rectangle(PX, PY, CW - PX, CH - PY,
+                                outline="#CCCCCC", width=1)
+
+            # Etiqueta del piso en el centro del rectángulo
+            cv.create_text(CW // 2, CH // 2,
+                           text=f"Piso {piso}", font=("Arial", 10, "bold"),
+                           fill="#BBBBBB")
+
+            # Puerta de referencia posicional (borde superior del rectángulo)
+            door_x       = CW // 2   # x=180, centro horizontal
+            dw           = 10        # semiancho: puerta de 20 px
+            dy_body_top  = PY - 12   # y=10 — inicio del cuerpo rectangular
+            door_fill    = "#BCAAA4"
+            door_outline = "#4E342E"
+            # Arco superior: semielipse con chord fill (y=0..10)
+            cv.create_arc(
+                door_x - dw, dy_body_top - dw,   # (170, 0)
+                door_x + dw, dy_body_top + dw,   # (190, 20)
+                start=0, extent=180, style="chord",
+                fill=door_fill, outline=door_outline, width=1,
+            )
+            # Cuerpo rectangular de la puerta (y=10..22)
+            cv.create_rectangle(
+                door_x - dw, dy_body_top,   # (170, 10)
+                door_x + dw, PY,             # (190, 22)
+                fill=door_fill, outline=door_outline, width=1,
+            )
+            # Pomo (manija pequeña a la derecha)
+            cv.create_oval(
+                door_x + 4, PY - 7,   # (184, 15)
+                door_x + 7, PY - 4,   # (187, 18)
+                fill=door_outline, outline="",
+            )
+
+            for offset, (cx, cy) in esquinas.items():
+                depto = deptos_piso[offset]
+                if depto in pagados:
+                    color = self._COLOR_PAGADO
+                elif hay_datos:
+                    color = self._COLOR_NOPAGADO
+                else:
+                    color = self._COLOR_SIN_DATO
+
+                cv.create_oval(cx - R, cy - R, cx + R, cy + R,
+                               fill=color, outline="white", width=2)
+                cv.create_text(cx, cy, text=str(base + offset),
+                               font=("Arial", 10, "bold"), fill="white")
+
+        sin_pagar_count = len(sin_pagar)
+        if hay_datos:
+            self.resumen_label.config(
+                text=f"{sin_pagar_count} de 20 sin pagar   |   {20 - sin_pagar_count} pagados",
+                fg="#C62828" if sin_pagar_count else "#2E7D32"
+            )
+        else:
+            self.resumen_label.config(text="Sin datos de pagos.", fg="#777777")
+
+
+# ---------------------------------------------------------------------------
+# Pantalla: Seguimiento de gastos del mes
+# ---------------------------------------------------------------------------
+
+class _EditarGastoDialog(tk.Toplevel):
+    """Diálogo para editar un ítem de gasto en su lugar."""
+
+    def __init__(self, parent, item, callback):
+        super().__init__(parent)
+        self._item     = item
+        self._callback = callback
+        self.title("Editar gasto")
+        self.resizable(False, False)
+        self.transient(parent)
+        self._build()
+        self.update_idletasks()
+        w, h = 360, 220
+        sw   = self.winfo_screenwidth()
+        sh   = self.winfo_screenheight()
+        self.geometry(f"{w}x{h}+{(sw - w) // 2}+{(sh - h) // 2}")
+        self.grab_set()
+        self.focus_force()
+
+    def _build(self):
+        frm = tk.Frame(self, padx=20, pady=16)
+        frm.pack(fill="both", expand=True)
+
+        tk.Label(frm, text="Concepto:", font=("Arial", 11), anchor="w").grid(
+            row=0, column=0, sticky="w", pady=7)
+        self.e_concepto = tk.Entry(frm, font=("Arial", 11), width=28)
+        self.e_concepto.insert(0, self._item["concepto"])
+        self.e_concepto.grid(row=0, column=1, padx=10, pady=7)
+
+        tk.Label(frm, text="Monto ($):", font=("Arial", 11), anchor="w").grid(
+            row=1, column=0, sticky="w", pady=7)
+        self.e_monto = tk.Entry(frm, font=("Arial", 11), width=28)
+        self.e_monto.insert(0, str(self._item["monto"]))
+        self.e_monto.grid(row=1, column=1, padx=10, pady=7)
+
+        tk.Label(frm, text="Fecha:", font=("Arial", 11), anchor="w").grid(
+            row=2, column=0, sticky="w", pady=7)
+        self.e_fecha = tk.Entry(frm, font=("Arial", 11), width=28)
+        self.e_fecha.insert(0, self._item["fecha"])
+        self.e_fecha.grid(row=2, column=1, padx=10, pady=7)
+
+        btn_frame = tk.Frame(frm)
+        btn_frame.grid(row=3, column=0, columnspan=2, pady=(14, 0))
+
+        tk.Button(btn_frame, text="Guardar", command=self._guardar,
+                  font=("Arial", 11, "bold"), bg="#1565C0", fg="white",
+                  relief="flat", cursor="hand2", padx=18).pack(side="left", padx=6)
+        tk.Button(btn_frame, text="Cancelar", command=self.destroy,
+                  font=("Arial", 11), relief="flat", cursor="hand2",
+                  padx=12).pack(side="left", padx=6)
+
+    def _guardar(self):
+        concepto = self.e_concepto.get().strip()
+        if not concepto:
+            messagebox.showerror("Campo requerido", "El concepto no puede estar vacío.", parent=self)
+            return
+        try:
+            monto = float(self.e_monto.get().strip())
+            if monto <= 0:
+                raise ValueError
+        except ValueError:
+            messagebox.showerror("Monto inválido", "Ingresa un monto positivo.", parent=self)
+            return
+        self._item["concepto"] = concepto
+        self._item["monto"]    = monto
+        self._item["fecha"]    = self.e_fecha.get().strip()
+        self._callback()
+        self.destroy()
+
+
+class SeguimientoGastos(tk.Frame):
+    """Seguimiento de pago de gastos del mes con informe pagado / pendiente."""
+
+    def __init__(self, parent, controller):
+        super().__init__(parent)
+        self.controller = controller
+        self._items: list[dict] = []   # {concepto, monto, fecha, pagado}
+        self._construir_ui()
+
+    # ------------------------------------------------------------------ UI --
+
+    def _construir_ui(self):
+        # Barra superior
+        topbar = tk.Frame(self, pady=4)
+        topbar.pack(fill="x", padx=8)
+        tk.Button(topbar, text="← Volver",
+                  command=lambda: self.controller.show_frame("MenuPrincipal"),
+                  font=("Arial", 9), relief="flat", cursor="hand2",
+                  fg="#1565C0").pack(side="left")
+        tk.Button(topbar, text="↺ Importar registro del mes",
+                  command=self._importar_desde_registro,
+                  font=("Arial", 9), relief="flat", cursor="hand2",
+                  fg="#555555").pack(side="right")
+
+        tk.Label(self, text="Gastos del Mes — Seguimiento",
+                 font=("Arial", 15, "bold")).pack(pady=(4, 2))
+        self.subtitulo = tk.Label(self, text="—", font=("Arial", 10), fg="#777777")
+        self.subtitulo.pack(pady=(0, 6))
+
+        # Formulario para agregar ítem manual
+        form = tk.Frame(self, padx=16)
+        form.pack(fill="x")
+        tk.Label(form, text="Concepto:", font=("Arial", 10)).grid(
+            row=0, column=0, sticky="w", padx=(0, 4), pady=4)
+        self.e_nuevo_concepto = tk.Entry(form, font=("Arial", 10), width=26)
+        self.e_nuevo_concepto.grid(row=0, column=1, padx=4, pady=4)
+        tk.Label(form, text="Monto ($):", font=("Arial", 10)).grid(
+            row=0, column=2, sticky="w", padx=(8, 4), pady=4)
+        self.e_nuevo_monto = tk.Entry(form, font=("Arial", 10), width=10)
+        self.e_nuevo_monto.grid(row=0, column=3, padx=4, pady=4)
+        tk.Button(form, text="+ Agregar", command=self._agregar_item,
+                  font=("Arial", 10, "bold"), bg="#2E7D32", fg="white",
+                  relief="flat", cursor="hand2", padx=10).grid(row=0, column=4, padx=8)
+
+        ttk.Separator(self, orient="horizontal").pack(fill="x", padx=16, pady=(4, 0))
+
+        # Tabla
+        tabla_frame = tk.Frame(self, padx=16)
+        tabla_frame.pack(fill="both", expand=True, pady=(4, 0))
+
+        cols = ("estado", "concepto", "monto", "fecha")
+        self.tabla = ttk.Treeview(tabla_frame, columns=cols,
+                                  show="headings", height=10)
+        self.tabla.heading("estado",   text="Estado",   anchor="center")
+        self.tabla.heading("concepto", text="Concepto", anchor="w")
+        self.tabla.heading("monto",    text="Monto",    anchor="e")
+        self.tabla.heading("fecha",    text="Fecha",    anchor="center")
+        self.tabla.column("estado",    width=100, anchor="center", stretch=False)
+        self.tabla.column("concepto",  width=280, anchor="w")
+        self.tabla.column("monto",     width=120, anchor="e",  stretch=False)
+        self.tabla.column("fecha",     width=95,  anchor="center", stretch=False)
+
+        sb = ttk.Scrollbar(tabla_frame, orient="vertical",
+                           command=self.tabla.yview)
+        self.tabla.configure(yscrollcommand=sb.set)
+        self.tabla.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y")
+
+        self.tabla.tag_configure("pagado",
+                                 background="#E8F5E9", foreground="#1B5E20")
+        self.tabla.tag_configure("pendiente",
+                                 background="#FFEBEE", foreground="#B71C1C")
+
+        # Botones de acción
+        acc = tk.Frame(self, padx=16)
+        acc.pack(fill="x", pady=(6, 0))
+
+        tk.Button(acc, text="✓  Marcar pagado / pendiente",
+                  command=self._toggle_pagado,
+                  font=("Arial", 10), bg="#2E7D32", fg="white",
+                  relief="flat", cursor="hand2", padx=10).pack(side="left", padx=(0, 6))
+        tk.Button(acc, text="✎  Editar",
+                  command=self._editar_item,
+                  font=("Arial", 10), bg="#1565C0", fg="white",
+                  relief="flat", cursor="hand2", padx=10).pack(side="left", padx=(0, 6))
+        tk.Button(acc, text="✕  Eliminar",
+                  command=self._eliminar_item,
+                  font=("Arial", 10), bg="#C62828", fg="white",
+                  relief="flat", cursor="hand2", padx=10).pack(side="left")
+        tk.Button(acc, text="Guardar",
+                  command=self._guardar,
+                  font=("Arial", 10, "bold"), bg="#37474F", fg="white",
+                  relief="flat", cursor="hand2", padx=14).pack(side="right")
+
+        # Separador e informe
+        ttk.Separator(self, orient="horizontal").pack(
+            fill="x", padx=16, pady=(10, 6))
+
+        inf = tk.Frame(self, padx=20, pady=2)
+        inf.pack(fill="x")
+
+        tk.Label(inf, text="Informe del mes",
+                 font=("Arial", 11, "bold")).pack(anchor="w", pady=(0, 4))
+
+        self.lbl_pagado = tk.Label(inf, text="✓  Pagado:      0 concepto(s) — $0.00",
+                                   font=("Arial", 11), fg="#2E7D32", anchor="w")
+        self.lbl_pagado.pack(fill="x")
+
+        self.lbl_pendiente = tk.Label(inf,
+                                      text="○  Pendiente:  0 concepto(s) — $0.00",
+                                      font=("Arial", 11), fg="#C62828", anchor="w")
+        self.lbl_pendiente.pack(fill="x")
+
+        self.lbl_total = tk.Label(inf, text="     Total:               $0.00",
+                                  font=("Arial", 12, "bold"), anchor="w")
+        self.lbl_total.pack(fill="x", pady=(4, 8))
+
+    # --------------------------------------------------------------- datos --
+
+    def cargar_datos(self):
+        """Llamado automáticamente al mostrar el frame."""
+        self._items = []
+
+        if os.path.exists(ARCHIVO_SEGUIMIENTO):
+            with open(ARCHIVO_SEGUIMIENTO, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            self._items = data.get("items", [])
+            self.subtitulo.config(text=data.get("mes", "—"))
+        else:
+            self._importar_desde_registro(silent=True)
+            return          # _importar ya llama _refrescar
+
+        self._refrescar_tabla()
+
+    def _importar_desde_registro(self, silent=False):
+        """Carga los gastos de la última sesión del mes desde gastos.json."""
+        if not os.path.exists(ARCHIVO_DATOS):
+            if not silent:
+                messagebox.showinfo("Sin datos",
+                                    "No hay registro de gastos guardado.")
+            return
+
+        with open(ARCHIVO_DATOS, "r", encoding="utf-8") as f:
+            datos = json.load(f)
+
+        m, y = self.controller.mes_activo
+        mes_key = f"{m:02d}/{y}"
+        sesiones_mes = []
+        for reg in datos:
+            try:
+                if _mes_key(reg) == mes_key:
+                    sesiones_mes.append(reg)
+            except KeyError:
+                pass
+
+        if not sesiones_mes:
+            if not silent:
+                messagebox.showinfo(
+                    "Sin datos",
+                    f"No hay gastos registrados para "
+                    f"{MESES_ES[m]} {y}.")
+            return
+
+        ultima = sesiones_mes[-1]
+        self._items = [
+            {"concepto": g["concepto"], "monto": g["monto"],
+             "fecha": g["fecha"], "pagado": False}
+            for g in ultima["gastos"]
+        ]
+        mes_label = f"{MESES_ES[m]} {y}"
+        self.subtitulo.config(text=mes_label)
+        self._refrescar_tabla()
+        self._guardar(silent=True)
+
+    # ------------------------------------------------------------- tabla ---
+
+    def _refrescar_tabla(self):
+        self.tabla.delete(*self.tabla.get_children())
+        for i, item in enumerate(self._items):
+            pagado = item.get("pagado", False)
+            estado = "✓  Pagado" if pagado else "○  Pendiente"
+            tag    = "pagado"    if pagado else "pendiente"
+            self.tabla.insert("", "end", iid=str(i),
+                              values=(estado, item["concepto"],
+                                      f"${item['monto']:,.2f}",
+                                      item.get("fecha", "")),
+                              tags=(tag,))
+        self._actualizar_informe()
+
+    def _actualizar_informe(self):
+        pagados    = [it for it in self._items if it.get("pagado")]
+        pendientes = [it for it in self._items if not it.get("pagado")]
+        tot_p = sum(it["monto"] for it in pagados)
+        tot_n = sum(it["monto"] for it in pendientes)
+        total = tot_p + tot_n
+
+        self.lbl_pagado.config(
+            text=f"✓  Pagado:      {len(pagados)} concepto(s) — ${tot_p:,.2f}")
+        self.lbl_pendiente.config(
+            text=f"○  Pendiente:  {len(pendientes)} concepto(s) — ${tot_n:,.2f}")
+        self.lbl_total.config(
+            text=f"     Total:               ${total:,.2f}")
+
+    # ------------------------------------------------------------ acciones --
+
+    def _selected_idx(self):
+        sel = self.tabla.selection()
+        if not sel:
+            messagebox.showwarning("Sin selección",
+                                   "Selecciona un elemento de la lista.")
+            return None
+        return int(sel[0])
+
+    def _toggle_pagado(self):
+        idx = self._selected_idx()
+        if idx is None:
+            return
+        self._items[idx]["pagado"] = not self._items[idx].get("pagado", False)
+        self._refrescar_tabla()
+        if str(idx) in self.tabla.get_children():
+            self.tabla.selection_set(str(idx))
+            self.tabla.see(str(idx))
+
+    def _agregar_item(self):
+        concepto = self.e_nuevo_concepto.get().strip()
+        if not concepto:
+            messagebox.showerror("Campo requerido", "Escribe un concepto.")
+            self.e_nuevo_concepto.focus()
+            return
+        try:
+            monto = float(self.e_nuevo_monto.get().strip())
+            if monto <= 0:
+                raise ValueError
+        except ValueError:
+            messagebox.showerror("Monto inválido", "Ingresa un monto positivo.")
+            self.e_nuevo_monto.focus()
+            return
+        self._items.append({
+            "concepto": concepto,
+            "monto":    monto,
+            "fecha":    date.today().strftime("%d/%m/%Y"),
+            "pagado":   False,
+        })
+        self.e_nuevo_concepto.delete(0, tk.END)
+        self.e_nuevo_monto.delete(0, tk.END)
+        self._refrescar_tabla()
+        self.e_nuevo_concepto.focus()
+
+    def _editar_item(self):
+        idx = self._selected_idx()
+        if idx is None:
+            return
+        _EditarGastoDialog(self, self._items[idx],
+                           callback=self._refrescar_tabla)
+
+    def _eliminar_item(self):
+        idx = self._selected_idx()
+        if idx is None:
+            return
+        nombre = self._items[idx]["concepto"]
+        if not messagebox.askyesno("Confirmar eliminación",
+                                   f"¿Eliminar «{nombre}»?"):
+            return
+        del self._items[idx]
+        self._refrescar_tabla()
+
+    def _guardar(self, silent=False):
+        hoy  = date.today()
+        data = {
+            "mes":         f"{MESES_ES[hoy.month]} {hoy.year}",
+            "guardado_en": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+            "items":       self._items,
+        }
+        with open(ARCHIVO_SEGUIMIENTO, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        if not silent:
+            pagados = sum(1 for it in self._items if it.get("pagado"))
+            messagebox.showinfo(
+                "Guardado",
+                f"Seguimiento guardado.\n"
+                f"{pagados} de {len(self._items)} concepto(s) marcado(s) como pagado.")
 
 
 # ---------------------------------------------------------------------------
