@@ -2668,26 +2668,21 @@ class SinPagarMes(tk.Frame):
         if os.path.exists(ARCHIVO_PAGOS):
             with open(ARCHIVO_PAGOS, "r", encoding="utf-8") as f:
                 datos = json.load(f)
-            sesiones_mes = []
+            n_pagos = 0
             for reg in datos:
-                try:
-                    mk = _mes_key(reg)
-                    if int(mk[:2]) == m and int(mk[3:]) == y:
-                        sesiones_mes.append(reg)
-                        for p in reg["pagos"]:
+                for p in reg["pagos"]:
+                    try:
+                        fecha_pago = datetime.strptime(p.get("fecha", ""), "%d/%m/%Y")
+                        if fecha_pago.month == m and fecha_pago.year == y:
                             pagados.add(p["departamento"])
-                except (ValueError, KeyError):
-                    pass
-            if sesiones_mes:
-                hay_datos = True
-                sesion_label = (f"{len(sesiones_mes)} sesión(es) registrada(s) "
-                                f"— {MESES_ES[m]} {y}")
+                            n_pagos += 1
+                            hay_datos = True
+                    except ValueError:
+                        pass
+            if hay_datos:
+                sesion_label = f"{n_pagos} pago(s) registrado(s) — {MESES_ES[m]} {y}"
             elif datos:
-                ultima = datos[-1]
-                sesion_label = f"Última sesión disponible: {ultima['guardado_en']}"
-                for p in ultima["pagos"]:
-                    pagados.add(p["departamento"])
-                hay_datos = True
+                sesion_label = f"Sin pagos con fecha de {MESES_ES[m]} {y}"
 
         self.subtitulo.config(text=sesion_label)
 
