@@ -1191,8 +1191,9 @@ class RegistroPagos(tk.Frame):
         self.tabla.column("departamento",  width=145, anchor="w")
         self.tabla.column("monto_pagado",  width=130, anchor="e")
         self.tabla.column("saldo",         width=130, anchor="e")
-        self.tabla.tag_configure("afavor",    foreground="#2E7D32")
-        self.tabla.tag_configure("pendiente", foreground="#C62828")
+        self.tabla.tag_configure("afavor",         foreground="#2E7D32")
+        self.tabla.tag_configure("pendiente",       foreground="#C62828")
+        self.tabla.tag_configure("saldo_aplicado",  foreground="#1565C0", font=("Arial", 9, "italic"))
         self.tabla.pack(fill="both", expand=True)
 
         # --- Botones de acción sobre la tabla ---
@@ -1300,6 +1301,55 @@ class RegistroPagos(tk.Frame):
         )
         self.cuota_origen.config(text=f"(guardado el {ultimo['guardado_en']}){origen_nota}")
         self._sincronizar_monto_total()
+        self._aplicar_saldos_a_favor()
+
+    def _aplicar_saldos_a_favor(self):
+        """Auto-registra departamentos cuyo saldo neto acumulado >= cuota del período."""
+        if self.cuota_valor <= 0 or not os.path.exists(ARCHIVO_PAGOS):
+            return
+
+        m, y = self.controller.mes_activo
+
+        with open(ARCHIVO_PAGOS, "r", encoding="utf-8") as f:
+            datos = json.load(f)
+
+        # Saldo neto acumulado por departamento (histórico completo)
+        acumulado = {}
+        ya_pagaron_mes = set()
+        for reg in datos:
+            for p in reg["pagos"]:
+                d = p["departamento"]
+                acumulado[d] = acumulado.get(d, 0.0) + p["saldo"]
+                try:
+                    fp = datetime.strptime(p.get("fecha", ""), "%d/%m/%Y")
+                    if fp.month == m and fp.year == y:
+                        ya_pagaron_mes.add(d)
+                except ValueError:
+                    pass
+
+        ya_en_sesion = {p["departamento"] for p in self.pagos}
+        hoy = date.today().strftime("%d/%m/%Y")
+
+        for d in self.DEPARTAMENTOS:
+            if d in ya_pagaron_mes or d in ya_en_sesion:
+                continue
+            saldo_neto = acumulado.get(d, 0.0)
+            if saldo_neto >= self.cuota_valor:
+                # El saldo cubre la cuota: se registra como pago desde balance
+                # monto_pagado=0 descuenta exactamente cuota del saldo acumulado
+                self.pagos.append({
+                    "fecha": hoy,
+                    "departamento": d,
+                    "monto_pagado": 0.0,
+                    "saldo": -self.cuota_valor,
+                })
+                remanente = saldo_neto - self.cuota_valor
+                rem_str = f"+${remanente:,.2f}" if remanente >= 0 else f"-${abs(remanente):,.2f}"
+                self.tabla.insert("", "end",
+                                  values=(hoy, d, "De saldo a favor", rem_str),
+                                  tags=("saldo_aplicado",))
+
+        self._actualizar_totales()
 
     # --- Checkbox monto total ---
 
@@ -1380,11 +1430,13 @@ class RegistroPagos(tk.Frame):
     # --- Helpers de tabla ---
 
     def _actualizar_totales(self):
-        total      = sum(p["monto_pagado"] for p in self.pagos)
-        a_favor    = sum(1 for p in self.pagos if p["saldo"] > 0)
-        pendientes = sum(1 for p in self.pagos if p["saldo"] < 0)
+        total       = sum(p["monto_pagado"] for p in self.pagos)
+        de_saldo    = sum(1 for p in self.pagos if p["monto_pagado"] == 0.0)
+        a_favor     = sum(1 for p in self.pagos if p["saldo"] > 0)
+        pendientes  = sum(1 for p in self.pagos if p["saldo"] < 0 and p["monto_pagado"] > 0)
         self.total_pago_label.config(text=f"Total recaudado:  ${total:,.2f}")
-        self.resumen_label.config(text=f"A favor: {a_favor}   |   Pendientes: {pendientes}")
+        extras = f"   |   De saldo: {de_saldo}" if de_saldo else ""
+        self.resumen_label.config(text=f"A favor: {a_favor}   |   Pendientes: {pendientes}{extras}")
 
     def _eliminar_pago(self):
         sel = self.tabla.selection()
