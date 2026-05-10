@@ -1135,17 +1135,24 @@ class RegistroPagos(tk.Frame):
             font=("Arial", 11), width=20, state="readonly",
         )
         self.depto_combo.grid(row=0, column=1, padx=10, pady=6, sticky="w")
+        self.depto_combo.bind("<<ComboboxSelected>>", self._on_depto_select)
+
+        # Fila de saldo previo del departamento seleccionado
+        self.saldo_previo_label = tk.Label(
+            form, text="", font=("Arial", 9, "italic"), anchor="w"
+        )
+        self.saldo_previo_label.grid(row=1, column=1, padx=10, pady=(0, 2), sticky="w")
 
         tk.Label(form, text="Fecha:", font=("Arial", 11), width=14, anchor="w").grid(
-            row=1, column=0, pady=6, sticky="w"
-        )
-        self.fecha_pago_entry, self.fecha_pago_btn = self._crear_campo_fecha(form, 1)
-
-        tk.Label(form, text="Monto pagado ($):", font=("Arial", 11), width=14, anchor="w").grid(
             row=2, column=0, pady=6, sticky="w"
         )
+        self.fecha_pago_entry, self.fecha_pago_btn = self._crear_campo_fecha(form, 2)
+
+        tk.Label(form, text="Monto pagado ($):", font=("Arial", 11), width=14, anchor="w").grid(
+            row=3, column=0, pady=6, sticky="w"
+        )
         monto_row = tk.Frame(form)
-        monto_row.grid(row=2, column=1, padx=10, pady=6, sticky="w")
+        monto_row.grid(row=3, column=1, padx=10, pady=6, sticky="w")
 
         self.monto_pago_var = tk.StringVar()
         self.monto_pago_entry = tk.Entry(
@@ -1162,13 +1169,13 @@ class RegistroPagos(tk.Frame):
         ).pack(side="left", padx=(8, 0))
 
         self.saldo_label = tk.Label(form, text="", font=("Arial", 10, "italic"), anchor="w")
-        self.saldo_label.grid(row=3, column=1, padx=10, sticky="w")
+        self.saldo_label.grid(row=4, column=1, padx=10, sticky="w")
 
         tk.Button(
             form, text="Agregar", command=self._agregar_pago,
             font=("Arial", 11, "bold"), bg="#6A1B9A", fg="white",
             activebackground="#4A148C", activeforeground="white", width=12, cursor="hand2",
-        ).grid(row=4, column=1, pady=10, sticky="e")
+        ).grid(row=5, column=1, pady=10, sticky="e")
 
         # --- Separador ---
         ttk.Separator(self, orient="horizontal").pack(fill="x", padx=20, pady=4)
@@ -1238,6 +1245,47 @@ class RegistroPagos(tk.Frame):
         ).pack(side="right")
 
         self.depto_combo.focus()
+
+    # --- Saldo previo al seleccionar departamento ---
+
+    def _on_depto_select(self, event=None):
+        depto = self.depto_var.get()
+        if not depto:
+            self.saldo_previo_label.config(text="")
+            return
+
+        saldo_neto = 0.0
+        if os.path.exists(ARCHIVO_PAGOS):
+            with open(ARCHIVO_PAGOS, "r", encoding="utf-8") as f:
+                datos = json.load(f)
+            saldo_neto = sum(
+                p["saldo"]
+                for reg in datos
+                for p in reg["pagos"]
+                if p["departamento"] == depto
+            )
+
+        if saldo_neto > 0.005:
+            monto_a_pagar = max(0.0, self.cuota_valor - saldo_neto)
+            self.saldo_previo_label.config(
+                text=f"Saldo a favor: +${saldo_neto:,.2f}  →  a pagar: ${monto_a_pagar:,.2f}",
+                fg="#1565C0",
+            )
+            # Desactivar "monto total" y pre-llenar con el monto descontado
+            self.monto_total_var.set(False)
+            self.monto_pago_entry.config(state="normal")
+            self.monto_pago_var.set(f"{monto_a_pagar:.2f}")
+        elif saldo_neto < -0.005:
+            self.saldo_previo_label.config(
+                text=f"Saldo pendiente: -${abs(saldo_neto):,.2f}",
+                fg="#C62828",
+            )
+            self.monto_total_var.set(True)
+            self._sincronizar_monto_total()
+        else:
+            self.saldo_previo_label.config(text="", fg="#555555")
+            self.monto_total_var.set(True)
+            self._sincronizar_monto_total()
 
     # --- Campo de fecha reutilizable ---
 
@@ -1422,8 +1470,10 @@ class RegistroPagos(tk.Frame):
         self._actualizar_totales()
 
         self.depto_var.set("")
+        self.saldo_previo_label.config(text="")
         self._resetear_campo_fecha(self.fecha_pago_entry, self.fecha_pago_btn)
-        self.monto_pago_var.set("")
+        self.monto_total_var.set(True)
+        self._sincronizar_monto_total()
         self.saldo_label.config(text="", fg="#555555")
         self.depto_combo.focus()
 
