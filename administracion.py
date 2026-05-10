@@ -2450,13 +2450,14 @@ class ReporteGastos(tk.Frame):
         self.info_label.config(text="")
 
         meses = {}
-        if os.path.exists(ARCHIVO_DATOS):
-            with open(ARCHIVO_DATOS, "r", encoding="utf-8") as f:
-                for reg in json.load(f):
-                    mk = _mes_key(reg)
-                    if mk not in meses:
-                        mes_n = int(mk[:2])
-                        meses[mk] = f"{MESES_ES[mes_n]} {mk[3:]}"
+        for archivo in (ARCHIVO_DATOS, ARCHIVO_PAGOS):
+            if os.path.exists(archivo):
+                with open(archivo, "r", encoding="utf-8") as f:
+                    for reg in json.load(f):
+                        mk = _mes_key(reg)
+                        if mk not in meses:
+                            mes_n = int(mk[:2])
+                            meses[mk] = f"{MESES_ES[mes_n]} {mk[3:]}"
 
         self._meses_disponibles = sorted(meses.items(), reverse=True)
         labels = [lbl for _, lbl in self._meses_disponibles]
@@ -2467,7 +2468,7 @@ class ReporteGastos(tk.Frame):
             self._on_mes_select()
         else:
             self.mes_combo.set("")
-            self.info_label.config(text="No hay registros de gastos guardados.")
+            self.info_label.config(text="No hay registros guardados.")
 
     def _on_mes_select(self, event=None):
         lbl = self.mes_var.get()
