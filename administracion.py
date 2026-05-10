@@ -1221,11 +1221,20 @@ class RegistroPagos(tk.Frame):
         )
         self.resumen_label.pack(fill="x", padx=24, pady=(0, 4))
 
+        btns_frame = tk.Frame(self)
+        btns_frame.pack(fill="x", padx=24, pady=(0, 12))
+
         tk.Button(
-            self, text="Aceptar", command=self._guardar_pagos,
+            btns_frame, text="Limpiar", command=self._limpiar_pagos,
+            font=("Arial", 11), bg="#757575", fg="white",
+            activebackground="#616161", activeforeground="white", width=10, cursor="hand2",
+        ).pack(side="left")
+
+        tk.Button(
+            btns_frame, text="Aceptar", command=self._guardar_pagos,
             font=("Arial", 11, "bold"), bg="#1565C0", fg="white",
             activebackground="#0D47A1", activeforeground="white", width=14, cursor="hand2",
-        ).pack(anchor="e", padx=24, pady=(0, 12))
+        ).pack(side="right")
 
         self.depto_combo.focus()
 
@@ -1491,6 +1500,15 @@ class RegistroPagos(tk.Frame):
                   ).pack(side="left")
 
     # --- Guardar ---
+
+    def _limpiar_pagos(self):
+        if not self.pagos:
+            return
+        if not messagebox.askyesno("Limpiar", "¿Limpiar todos los pagos de la tabla?"):
+            return
+        self.pagos.clear()
+        self.tabla.delete(*self.tabla.get_children())
+        self._actualizar_totales()
 
     def _guardar_pagos(self):
         if not self.pagos:
