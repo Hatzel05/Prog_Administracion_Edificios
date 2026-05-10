@@ -3043,17 +3043,36 @@ class SeguimientoGastos(tk.Frame):
     def cargar_datos(self):
         """Llamado automáticamente al mostrar el frame."""
         self._items = []
+        m, y = self.controller.mes_activo
+        mes_key = f"{m:02d}/{y}"
+        mes_label = f"{MESES_ES[m]} {y}"
 
         if os.path.exists(ARCHIVO_SEGUIMIENTO):
             with open(ARCHIVO_SEGUIMIENTO, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            self._items = data.get("items", [])
-            self.subtitulo.config(text=data.get("mes", "—"))
-        else:
-            self._importar_desde_registro(silent=True)
-            return          # _importar ya llama _refrescar
+                raw = json.load(f)
 
-        self._refrescar_tabla()
+            # Migración: formato antiguo (clave "mes" en raíz) → nuevo multi-mes
+            if "mes" in raw and "items" in raw:
+                mk_viejo = raw.get("guardado_en", "")
+                try:
+                    dt = datetime.strptime(mk_viejo, "%d/%m/%Y %H:%M:%S")
+                    mk_viejo = f"{dt.month:02d}/{dt.year}"
+                except ValueError:
+                    mk_viejo = mes_key
+                raw = {mk_viejo: {"mes": raw["mes"],
+                                  "guardado_en": raw.get("guardado_en", ""),
+                                  "items": raw["items"]}}
+                with open(ARCHIVO_SEGUIMIENTO, "w", encoding="utf-8") as f:
+                    json.dump(raw, f, ensure_ascii=False, indent=2)
+
+            if mes_key in raw:
+                self._items = raw[mes_key].get("items", [])
+                self.subtitulo.config(text=mes_label)
+                self._refrescar_tabla()
+                return
+
+        # Sin datos para este mes → intentar importar desde gastos.json
+        self._importar_desde_registro(silent=True)
 
     def _importar_desde_registro(self, silent=False):
         """Carga los gastos de la última sesión del mes desde gastos.json."""
@@ -3188,19 +3207,32 @@ class SeguimientoGastos(tk.Frame):
         self._refrescar_tabla()
 
     def _guardar(self, silent=False):
-        hoy  = date.today()
-        data = {
-            "mes":         f"{MESES_ES[hoy.month]} {hoy.year}",
+        m, y = self.controller.mes_activo
+        mes_key = f"{m:02d}/{y}"
+        mes_label = f"{MESES_ES[m]} {y}"
+
+        # Leer archivo existente (puede tener otros meses)
+        if os.path.exists(ARCHIVO_SEGUIMIENTO):
+            with open(ARCHIVO_SEGUIMIENTO, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+            # Migrar formato antiguo si es necesario
+            if "mes" in raw and "items" in raw:
+                raw = {}
+        else:
+            raw = {}
+
+        raw[mes_key] = {
+            "mes":         mes_label,
             "guardado_en": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
             "items":       self._items,
         }
         with open(ARCHIVO_SEGUIMIENTO, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+            json.dump(raw, f, ensure_ascii=False, indent=2)
         if not silent:
             pagados = sum(1 for it in self._items if it.get("pagado"))
             messagebox.showinfo(
                 "Guardado",
-                f"Seguimiento guardado.\n"
+                f"Seguimiento guardado — {mes_label}.\n"
                 f"{pagados} de {len(self._items)} concepto(s) marcado(s) como pagado.")
 
 
