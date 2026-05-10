@@ -762,7 +762,16 @@ class RegistroGastos(tk.Frame):
 
     def actualizar_periodo(self):
         m, y = self.controller.mes_activo
-        self.periodo_label.config(text=f"Período: {MESES_ES[m]} {y}")
+        hoy = date.today()
+        if (m, y) != (hoy.month, hoy.year):
+            self.periodo_label.config(
+                text=f"⚠  Período: {MESES_ES[m]} {y}  (distinto al mes actual)",
+                fg="#E65100",
+            )
+        else:
+            self.periodo_label.config(
+                text=f"Período: {MESES_ES[m]} {y}", fg="#1A237E"
+            )
 
     def _guardar_registros(self):
         if not self.gastos:
@@ -1311,7 +1320,16 @@ class RegistroPagos(tk.Frame):
         """Carga la cuota del último registro de gastos del período activo."""
         m, y = self.controller.mes_activo
         mes_key = f"{m:02d}/{y}"
-        self.periodo_label.config(text=f"Período: {MESES_ES[m]} {y}")
+        hoy = date.today()
+        if (m, y) != (hoy.month, hoy.year):
+            self.periodo_label.config(
+                text=f"⚠  Período: {MESES_ES[m]} {y}  (distinto al mes actual)",
+                fg="#E65100",
+            )
+        else:
+            self.periodo_label.config(
+                text=f"Período: {MESES_ES[m]} {y}", fg="#1A237E"
+            )
 
         if not os.path.exists(ARCHIVO_DATOS):
             self.cuota_valor = CUOTA_BASE
