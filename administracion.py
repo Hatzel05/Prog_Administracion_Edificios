@@ -1521,6 +1521,11 @@ class RegistroPagos(tk.Frame):
             f"{len(self.pagos)} departamento(s)  —  Total: ${total:,.2f}",
         )
 
+        # Limpiar sesión para evitar duplicados si se vuelve a presionar Aceptar
+        self.pagos.clear()
+        self.tabla.delete(*self.tabla.get_children())
+        self._actualizar_totales()
+
 
 # ---------------------------------------------------------------------------
 # Pantalla: Vista de pagos guardados
