@@ -2398,7 +2398,6 @@ class ReporteGastos(tk.Frame):
     def __init__(self, parent, controller):
         super().__init__(parent)
         self.controller = controller
-        self._meses_disponibles = []
         self._construir_ui()
 
     def _construir_ui(self):
@@ -2410,26 +2409,16 @@ class ReporteGastos(tk.Frame):
             font=("Arial", 9), relief="flat", cursor="hand2", fg="#1565C0",
         ).pack(side="left")
 
-        tk.Label(self, text="Reporte de Gastos PDF", font=("Arial", 16, "bold")).pack(pady=(4, 10))
+        tk.Label(self, text="Reporte de Gastos PDF", font=("Arial", 16, "bold")).pack(pady=(4, 4))
 
-        form = tk.Frame(self, padx=30)
-        form.pack(fill="x")
-
-        tk.Label(form, text="Mes del reporte:", font=("Arial", 11), anchor="w").grid(
-            row=0, column=0, sticky="w", pady=8
-        )
-        self.mes_var = tk.StringVar()
-        self.mes_combo = ttk.Combobox(
-            form, textvariable=self.mes_var, font=("Arial", 11),
-            width=22, state="readonly",
-        )
-        self.mes_combo.grid(row=0, column=1, padx=12, pady=8, sticky="w")
-        self.mes_combo.bind("<<ComboboxSelected>>", self._on_mes_select)
+        self.periodo_label = tk.Label(self, text="—", font=("Arial", 12, "bold"),
+                                      fg="#1A237E", bg="#E8EAF6", padx=12, pady=4)
+        self.periodo_label.pack(pady=(0, 10))
 
         self.info_label = tk.Label(
             self, text="", font=("Arial", 10), fg="#444444", anchor="w", justify="left"
         )
-        self.info_label.pack(fill="x", padx=30, pady=(4, 10))
+        self.info_label.pack(fill="x", padx=30, pady=(0, 10))
 
         ttk.Separator(self, orient="horizontal").pack(fill="x", padx=20, pady=8)
 
@@ -2446,42 +2435,28 @@ class ReporteGastos(tk.Frame):
         self.estado_label.pack(pady=(0, 8))
 
     def cargar_datos(self):
+        m, y = self.controller.mes_activo
+        mes_key = f"{m:02d}/{y}"
+        mes_label = f"{MESES_ES[m]} {y}"
+
         self.estado_label.config(text="")
-        self.info_label.config(text="")
+        self.periodo_label.config(text=mes_label)
 
-        meses = {}
-        for archivo in (ARCHIVO_DATOS, ARCHIVO_PAGOS):
-            if os.path.exists(archivo):
-                with open(archivo, "r", encoding="utf-8") as f:
-                    for reg in json.load(f):
-                        mk = _mes_key(reg)
-                        if mk not in meses:
-                            mes_n = int(mk[:2])
-                            meses[mk] = f"{MESES_ES[mes_n]} {mk[3:]}"
-
-        self._meses_disponibles = sorted(meses.items(), reverse=True)
-        labels = [lbl for _, lbl in self._meses_disponibles]
-        self.mes_combo["values"] = labels
-
-        if labels:
-            self.mes_combo.current(0)
-            self._on_mes_select()
-        else:
-            self.mes_combo.set("")
-            self.info_label.config(text="No hay registros guardados.")
-
-    def _on_mes_select(self, event=None):
-        lbl = self.mes_var.get()
-        mk = next((k for k, v in self._meses_disponibles if v == lbl), None)
-        if not mk:
-            return
         n = 0
         if os.path.exists(ARCHIVO_DATOS):
             with open(ARCHIVO_DATOS, "r", encoding="utf-8") as f:
                 for reg in json.load(f):
-                    if _mes_key(reg) == mk:
+                    if _mes_key(reg) == mes_key:
                         n += len(reg["gastos"])
-        self.info_label.config(text=f"  Gastos registrados: {n} concepto(s)")
+
+        if n:
+            self.info_label.config(text=f"  Gastos registrados: {n} concepto(s)", fg="#444444")
+        else:
+            self.info_label.config(
+                text=f"  Sin gastos registrados para {mes_label}.\n"
+                     f"  Registra los gastos del mes antes de generar el reporte.",
+                fg="#C62828"
+            )
 
     def _generar_pdf(self):
         if not REPORTLAB_OK:
@@ -2493,36 +2468,34 @@ class ReporteGastos(tk.Frame):
             )
             return
 
-        lbl = self.mes_var.get()
-        mk = next((k for k, v in self._meses_disponibles if v == lbl), None)
-        if not mk:
-            messagebox.showwarning("Sin selección", "Selecciona un mes para generar el reporte.")
-            return
+        m, y = self.controller.mes_activo
+        mes_key = f"{m:02d}/{y}"
+        mes_label = f"{MESES_ES[m]} {y}"
 
         gastos_lista = []
         if os.path.exists(ARCHIVO_DATOS):
             with open(ARCHIVO_DATOS, "r", encoding="utf-8") as f:
                 for reg in json.load(f):
-                    if _mes_key(reg) == mk:
+                    if _mes_key(reg) == mes_key:
                         gastos_lista.extend(reg["gastos"])
 
         if not gastos_lista:
-            messagebox.showwarning("Sin datos", f"No hay gastos registrados para {lbl}.")
+            messagebox.showwarning("Sin datos", f"No hay gastos registrados para {mes_label}.")
             return
 
         def _generar():
             try:
                 carpeta = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reportes")
                 os.makedirs(carpeta, exist_ok=True)
-                archivo = os.path.join(carpeta, f"gastos_{mk.replace('/', '_')}.pdf")
-                _construir_pdf_gastos(archivo, lbl, gastos_lista)
+                archivo = os.path.join(carpeta, f"gastos_{mes_key.replace('/', '_')}.pdf")
+                _construir_pdf_gastos(archivo, mes_label, gastos_lista)
                 self.estado_label.config(text=f"PDF generado: {os.path.basename(archivo)}")
                 messagebox.showinfo("PDF generado", f"Reporte guardado en:\n{archivo}")
                 _abrir_pdf(archivo)
             except Exception as e:
                 messagebox.showerror("Error al generar PDF", str(e))
 
-        _abrir_preview_gastos(self, lbl, gastos_lista, _generar)
+        _abrir_preview_gastos(self, mes_label, gastos_lista, _generar)
 
 
 def _construir_pdf_gastos(ruta, mes_label, gastos_lista):
