@@ -741,14 +741,7 @@ class RegistroGastos(tk.Frame):
             return
 
         self.gastos.append({"fecha": fecha, "concepto": concepto, "monto": monto})
-        self.tabla.insert("", "end", values=(fecha, concepto, f"${monto:,.2f}"))
-
-        total = sum(g["monto"] for g in self.gastos)
-        n_pagantes = 20 - len(_cargar_exentos())
-        self.total_label.config(text=f"Total:  ${total:,.2f}")
-        self.cuota_label.config(
-            text=f"Por departamento (÷{n_pagantes}):  ${total / n_pagantes:,.2f}"
-        )
+        self._refrescar_tabla_gastos()
 
         self.concepto_var.set("")
         self.concepto_otro.delete(0, tk.END)
@@ -795,11 +788,20 @@ class RegistroGastos(tk.Frame):
                               values=(g["fecha"], g["concepto"], f"${g['monto']:,.2f}"),
                               tags=tag)
         total = sum(g["monto"] for g in self.gastos)
-        n_pagantes = 20 - len(_cargar_exentos())
+        fondo = sum(g["monto"] for g in self.gastos if g["concepto"] == "Fondo de ahorro")
+        otros = total - fondo
+        n_exentos = len(_cargar_exentos())
+        cuota_pagante = CUOTA_BASE + otros / 20
         self.total_label.config(text=f"Total:  ${total:,.2f}")
-        self.cuota_label.config(
-            text=f"Por departamento (÷{n_pagantes}):  ${total / n_pagantes:,.2f}"
-        )
+        if n_exentos > 0:
+            cuota_exento = otros / 20
+            self.cuota_label.config(
+                text=f"Cuota pagante: ${cuota_pagante:,.2f}   |   Exento: ${cuota_exento:,.2f}"
+            )
+        else:
+            self.cuota_label.config(
+                text=f"Por departamento (÷20):  ${cuota_pagante:,.2f}"
+            )
 
     def actualizar_periodo(self):
         m, y = self.controller.mes_activo
@@ -827,13 +829,17 @@ class RegistroGastos(tk.Frame):
 
         m, y = self.controller.mes_activo
         total = sum(g["monto"] for g in self.gastos)
-        n_pagantes = 20 - len(_cargar_exentos())
+        fondo = sum(g["monto"] for g in self.gastos if g["concepto"] == "Fondo de ahorro")
+        otros = total - fondo
+        cuota_pagante = CUOTA_BASE + otros / 20
+        cuota_exento  = otros / 20
         registro = {
-            "guardado_en": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
-            "mes_periodo": f"{m:02d}/{y}",
-            "gastos": list(self.gastos),
-            "total": total,
-            "cuota_por_depto": total / n_pagantes,
+            "guardado_en":   datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+            "mes_periodo":   f"{m:02d}/{y}",
+            "gastos":        list(self.gastos),
+            "total":         total,
+            "cuota_por_depto": cuota_pagante,
+            "cuota_exento":  cuota_exento,
         }
 
         datos = []
@@ -1166,7 +1172,9 @@ class RegistroPagos(tk.Frame):
         self.periodo_label.pack(pady=(0, 4))
 
         # --- Cuota del período (solo lectura, tomada del último registro de gastos) ---
-        self.cuota_valor = 0.0
+        self.cuota_valor = 0.0    # cuota para depts pagantes
+        self.cuota_exento = 0.0   # cuota para depts exentos (sin fondo base)
+        self._exentos: set = set()
         cuota_frame = tk.Frame(self, padx=24)
         cuota_frame.pack(fill="x", pady=(0, 4))
         tk.Label(cuota_frame, text="Cuota del período:", font=("Arial", 11)).pack(side="left")
@@ -1305,6 +1313,12 @@ class RegistroPagos(tk.Frame):
 
     # --- Saldo previo al seleccionar departamento ---
 
+    def _cuota_para(self, depto):
+        """Devuelve la cuota que corresponde al departamento según si es exento."""
+        if depto and depto in self._exentos:
+            return self.cuota_exento
+        return self.cuota_valor
+
     def _on_depto_select(self, event=None):
         depto = self.depto_var.get()
         if not depto:
@@ -1322,8 +1336,9 @@ class RegistroPagos(tk.Frame):
                 if p["departamento"] == depto
             )
 
+        cuota = self._cuota_para(depto)
         if saldo_neto > 0.005:
-            monto_a_pagar = max(0.0, self.cuota_valor - saldo_neto)
+            monto_a_pagar = max(0.0, cuota - saldo_neto)
             self.saldo_previo_label.config(
                 text=f"Saldo a favor: +${saldo_neto:,.2f}  →  a pagar: ${monto_a_pagar:,.2f}",
                 fg="#1565C0",
@@ -1379,8 +1394,11 @@ class RegistroPagos(tk.Frame):
                 text=f"Período: {MESES_ES[m]} {y}", fg="#1A237E"
             )
 
+        self._exentos = _cargar_exentos()
+
         if not os.path.exists(ARCHIVO_DATOS):
             self.cuota_valor = CUOTA_BASE
+            self.cuota_exento = 0.0
             self.cuota_display.config(text=f"${CUOTA_BASE:,.2f}", fg="#1A237E")
             self.cuota_origen.config(text="(solo cuota base, sin gastos registrados)")
             self._sincronizar_monto_total()
@@ -1389,6 +1407,7 @@ class RegistroPagos(tk.Frame):
             datos = json.load(f)
         if not datos:
             self.cuota_valor = CUOTA_BASE
+            self.cuota_exento = 0.0
             self.cuota_display.config(text=f"${CUOTA_BASE:,.2f}", fg="#1A237E")
             self.cuota_origen.config(text="(solo cuota base, sin gastos registrados)")
             self._sincronizar_monto_total()
@@ -1410,9 +1429,20 @@ class RegistroPagos(tk.Frame):
             ultimo["cuota_por_depto"] if tiene_fondo
             else ultimo["cuota_por_depto"] + CUOTA_BASE
         )
-        self.cuota_display.config(
-            text=f"${self.cuota_valor:,.2f}", fg="#1A237E"
+        # cuota_exento: solo la parte de otros gastos (sin fondo base)
+        self.cuota_exento = ultimo.get(
+            "cuota_exento", max(0.0, self.cuota_valor - CUOTA_BASE)
         )
+
+        if self._exentos:
+            self.cuota_display.config(
+                text=f"Pagante: ${self.cuota_valor:,.2f}   |   Exento: ${self.cuota_exento:,.2f}",
+                fg="#1A237E"
+            )
+        else:
+            self.cuota_display.config(
+                text=f"${self.cuota_valor:,.2f}", fg="#1A237E"
+            )
         self.cuota_origen.config(text=f"(guardado el {ultimo['guardado_en']}){origen_nota}")
         self._sincronizar_monto_total()
         self._aplicar_saldos_a_favor()
@@ -1448,16 +1478,17 @@ class RegistroPagos(tk.Frame):
             if d in ya_pagaron_mes or d in ya_en_sesion:
                 continue
             saldo_neto = acumulado.get(d, 0.0)
-            if saldo_neto >= self.cuota_valor:
+            cuota_d = self._cuota_para(d)
+            if saldo_neto >= cuota_d:
                 # El saldo cubre la cuota: se registra como pago desde balance
                 # monto_pagado=0 descuenta exactamente cuota del saldo acumulado
                 self.pagos.append({
                     "fecha": hoy,
                     "departamento": d,
                     "monto_pagado": 0.0,
-                    "saldo": -self.cuota_valor,
+                    "saldo": -cuota_d,
                 })
-                remanente = saldo_neto - self.cuota_valor
+                remanente = saldo_neto - cuota_d
                 rem_str = f"+${remanente:,.2f}" if remanente >= 0 else f"-${abs(remanente):,.2f}"
                 self.tabla.insert("", "end",
                                   values=(hoy, d, "De saldo a favor", rem_str),
@@ -1468,9 +1499,10 @@ class RegistroPagos(tk.Frame):
     # --- Checkbox monto total ---
 
     def _toggle_monto_pago(self):
+        cuota = self._cuota_para(self.depto_var.get())
         if self.monto_total_var.get():
             self.monto_pago_entry.config(state="normal")
-            self.monto_pago_var.set(f"{self.cuota_valor:.2f}")
+            self.monto_pago_var.set(f"{cuota:.2f}")
             self.monto_pago_entry.config(state="readonly")
         else:
             self.monto_pago_entry.config(state="normal")
@@ -1479,16 +1511,18 @@ class RegistroPagos(tk.Frame):
 
     def _sincronizar_monto_total(self):
         """Si el checkbox está marcado, actualiza el entry con la cuota vigente."""
+        cuota = self._cuota_para(self.depto_var.get())
         if self.monto_total_var.get():
             self.monto_pago_entry.config(state="normal")
-            self.monto_pago_var.set(f"{self.cuota_valor:.2f}")
+            self.monto_pago_var.set(f"{cuota:.2f}")
             self.monto_pago_entry.config(state="readonly")
 
     # --- Saldo dinámico ---
 
     def _actualizar_saldo_label(self):
         try:
-            saldo = float(self.monto_pago_var.get()) - self.cuota_valor
+            cuota = self._cuota_para(self.depto_var.get())
+            saldo = float(self.monto_pago_var.get()) - cuota
             if saldo > 0:
                 self.saldo_label.config(text=f"Saldo: +${saldo:,.2f}  (a favor)", fg="#2E7D32")
             elif saldo < 0:
@@ -1524,8 +1558,9 @@ class RegistroPagos(tk.Frame):
             self.monto_pago_entry.focus()
             return
 
+        cuota = self._cuota_para(depto)
         fecha = self.fecha_pago_entry.get().strip()
-        saldo = monto - self.cuota_valor
+        saldo = monto - cuota
         self.pagos.append({"fecha": fecha, "departamento": depto, "monto_pagado": monto, "saldo": saldo})
 
         saldo_str = f"+${saldo:,.2f}" if saldo >= 0 else f"-${abs(saldo):,.2f}"
@@ -1619,7 +1654,8 @@ class RegistroPagos(tk.Frame):
 
         def actualizar_saldo(*_):
             try:
-                s = float(monto_entry.get()) - self.cuota_valor
+                cuota = self._cuota_para(depto_combo.get())
+                s = float(monto_entry.get()) - cuota
                 if s > 0:
                     saldo_lbl.config(text=f"+${s:,.2f}  (a favor)", fg="#2E7D32")
                 elif s < 0:
@@ -1629,6 +1665,7 @@ class RegistroPagos(tk.Frame):
             except ValueError:
                 saldo_lbl.config(text="")
 
+        depto_combo.bind("<<ComboboxSelected>>", actualizar_saldo)
         monto_entry.bind("<KeyRelease>", actualizar_saldo)
         actualizar_saldo()
 
@@ -1645,7 +1682,7 @@ class RegistroPagos(tk.Frame):
             except ValueError:
                 messagebox.showerror("Monto inválido", "Ingresa un monto decimal positivo.", parent=dlg)
                 return
-            nuevo_saldo = nuevo_monto - self.cuota_valor
+            nuevo_saldo = nuevo_monto - self._cuota_para(nuevo_depto)
             self.pagos[idx] = {
                 "fecha": nueva_fecha, "departamento": nuevo_depto,
                 "monto_pagado": nuevo_monto, "saldo": nuevo_saldo,
