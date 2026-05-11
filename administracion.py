@@ -28,6 +28,18 @@ ARCHIVO_DATOS        = os.path.join(os.path.dirname(os.path.abspath(__file__)), 
 ARCHIVO_PAGOS        = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pagos.json")
 ARCHIVO_NOTAS        = os.path.join(os.path.dirname(os.path.abspath(__file__)), "notas.json")
 ARCHIVO_SEGUIMIENTO  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "seguimiento_gastos.json")
+ARCHIVO_EXENTOS      = os.path.join(os.path.dirname(os.path.abspath(__file__)), "exentos.json")
+
+
+def _cargar_exentos():
+    if not os.path.exists(ARCHIVO_EXENTOS):
+        return set()
+    with open(ARCHIVO_EXENTOS, "r", encoding="utf-8") as f:
+        return set(json.load(f))
+
+def _guardar_exentos(exentos):
+    with open(ARCHIVO_EXENTOS, "w", encoding="utf-8") as f:
+        json.dump(sorted(exentos), f, ensure_ascii=False, indent=2)
 
 
 def _abrir_pdf(ruta):
@@ -194,7 +206,7 @@ class AdministracionApp:
     """Controlador principal: gestiona la ventana y la navegación entre pantallas."""
 
     TAMANIOS = {
-        "MenuPrincipal":       "400x900",
+        "MenuPrincipal":       "400x960",
         "RegistroGastos":      "620x620",
         "VistaRegistros":      "680x490",
         "RegistroPagos":       "600x580",
@@ -206,6 +218,7 @@ class AdministracionApp:
         "Notas":               "560x520",
         "SinPagarMes":         "420x720",
         "SeguimientoGastos":   "640x600",
+        "GestionExentos":      "480x560",
     }
 
     def __init__(self, root):
@@ -226,7 +239,7 @@ class AdministracionApp:
                            RegistroPagos, VistaPagos,
                            SaldosAFavor, SaldosPendientes, GenerarReporte,
                            ReporteGastos, Notas, SinPagarMes,
-                           SeguimientoGastos):
+                           SeguimientoGastos, GestionExentos):
             frame = FrameClass(container, self)
             self.frames[FrameClass.__name__] = frame
             frame.grid(row=0, column=0, sticky="nsew")
@@ -246,7 +259,8 @@ class AdministracionApp:
         self.frames[name].tkraise()
         if name in ("VistaRegistros", "VistaPagos", "SaldosAFavor",
                     "SaldosPendientes", "GenerarReporte", "ReporteGastos",
-                    "Notas", "SinPagarMes", "SeguimientoGastos"):
+                    "Notas", "SinPagarMes", "SeguimientoGastos",
+                    "GestionExentos"):
             self.frames[name].cargar_datos()
         elif name == "RegistroPagos":
             self.frames[name].actualizar_cuota_sugerida()
@@ -481,6 +495,21 @@ class MenuPrincipal(tk.Frame):
             relief="flat",
         ).pack(pady=8)
 
+        tk.Button(
+            self,
+            text="Departamentos Exentos",
+            command=lambda: self.controller.show_frame("GestionExentos"),
+            font=("Arial", 12, "bold"),
+            bg="#5D4037",
+            fg="white",
+            activebackground="#3E2723",
+            activeforeground="white",
+            width=26,
+            height=2,
+            cursor="hand2",
+            relief="flat",
+        ).pack(pady=8)
+
     def _actualizar_periodo_label(self):
         m, y = self.controller.mes_activo
         self._periodo_label.config(text=f"{MESES_ES[m]}  {y}")
@@ -504,10 +533,12 @@ class RegistroGastos(tk.Frame):
     def __init__(self, parent, controller):
         super().__init__(parent)
         self.controller = controller
+        exentos = _cargar_exentos()
+        n_pagantes = 20 - len(exentos)
         self.gastos = [
             {"fecha": date.today().strftime("%d/%m/%Y"),
              "concepto": "Fondo de ahorro",
-             "monto": CUOTA_BASE * 20}
+             "monto": CUOTA_BASE * n_pagantes}
         ]
         self._construir_ui()
 
@@ -652,15 +683,9 @@ class RegistroGastos(tk.Frame):
             cursor="hand2",
         ).pack(side="right")
 
-        # Pre-cargar Fondo de ahorro en tabla
-        for g in self.gastos:
-            self.tabla.insert("", "end",
-                              values=(g["fecha"], g["concepto"], f"${g['monto']:,.2f}"),
-                              tags=("fondo",))
         self.tabla.tag_configure("fondo", foreground="#1565C0")
-        total_init = sum(g["monto"] for g in self.gastos)
-        self.total_label.config(text=f"Total:  ${total_init:,.2f}")
-        self.cuota_label.config(text=f"Por departamento (÷20):  ${total_init / 20:,.2f}")
+        # Pre-cargar Fondo de ahorro en tabla
+        self._refrescar_tabla_gastos()
 
         self.concepto_combo.focus()
 
@@ -719,9 +744,11 @@ class RegistroGastos(tk.Frame):
         self.tabla.insert("", "end", values=(fecha, concepto, f"${monto:,.2f}"))
 
         total = sum(g["monto"] for g in self.gastos)
+        n_pagantes = 20 - len(_cargar_exentos())
         self.total_label.config(text=f"Total:  ${total:,.2f}")
-        cuota = total / 20
-        self.cuota_label.config(text=f"Por departamento (÷20):  ${cuota:,.2f}")
+        self.cuota_label.config(
+            text=f"Por departamento (÷{n_pagantes}):  ${total / n_pagantes:,.2f}"
+        )
 
         self.concepto_var.set("")
         self.concepto_otro.delete(0, tk.END)
@@ -760,6 +787,20 @@ class RegistroGastos(tk.Frame):
 
         _abrir_preview_gastos(self, mes_label, self.gastos, _generar)
 
+    def _refrescar_tabla_gastos(self):
+        self.tabla.delete(*self.tabla.get_children())
+        for g in self.gastos:
+            tag = ("fondo",) if g["concepto"] == "Fondo de ahorro" else ()
+            self.tabla.insert("", "end",
+                              values=(g["fecha"], g["concepto"], f"${g['monto']:,.2f}"),
+                              tags=tag)
+        total = sum(g["monto"] for g in self.gastos)
+        n_pagantes = 20 - len(_cargar_exentos())
+        self.total_label.config(text=f"Total:  ${total:,.2f}")
+        self.cuota_label.config(
+            text=f"Por departamento (÷{n_pagantes}):  ${total / n_pagantes:,.2f}"
+        )
+
     def actualizar_periodo(self):
         m, y = self.controller.mes_activo
         hoy = date.today()
@@ -772,6 +813,12 @@ class RegistroGastos(tk.Frame):
             self.periodo_label.config(
                 text=f"Período: {MESES_ES[m]} {y}", fg="#1A237E"
             )
+        # Refresh fondo de ahorro if exentos changed
+        exentos = _cargar_exentos()
+        n_pagantes = 20 - len(exentos)
+        if self.gastos and self.gastos[0]["concepto"] == "Fondo de ahorro":
+            self.gastos[0]["monto"] = CUOTA_BASE * n_pagantes
+        self._refrescar_tabla_gastos()
 
     def _guardar_registros(self):
         if not self.gastos:
@@ -780,12 +827,13 @@ class RegistroGastos(tk.Frame):
 
         m, y = self.controller.mes_activo
         total = sum(g["monto"] for g in self.gastos)
+        n_pagantes = 20 - len(_cargar_exentos())
         registro = {
             "guardado_en": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
             "mes_periodo": f"{m:02d}/{y}",
             "gastos": list(self.gastos),
             "total": total,
-            "cuota_por_depto": total / 20,
+            "cuota_por_depto": total / n_pagantes,
         }
 
         datos = []
@@ -3276,6 +3324,114 @@ class SeguimientoGastos(tk.Frame):
                 "Guardado",
                 f"Seguimiento guardado — {mes_label}.\n"
                 f"{pagados} de {len(self._items)} concepto(s) marcado(s) como pagado.")
+
+
+# ---------------------------------------------------------------------------
+# Pantalla: Gestión de departamentos exentos de cuota base
+# ---------------------------------------------------------------------------
+
+class GestionExentos(tk.Frame):
+    """Permite marcar departamentos que no pagan la cuota base de $200."""
+
+    DEPTOS = [f"Depto {n}" for n in range(17, 37)]
+
+    def __init__(self, parent, controller):
+        super().__init__(parent, bg="#F5F5F5")
+        self.controller = controller
+        self._vars = {}
+        self._construir_ui()
+
+    def _construir_ui(self):
+        topbar = tk.Frame(self, bg="#F5F5F5", pady=4)
+        topbar.pack(fill="x", padx=8)
+        tk.Button(
+            topbar, text="← Volver",
+            command=lambda: self.controller.show_frame("MenuPrincipal"),
+            font=("Arial", 9), relief="flat", cursor="hand2",
+            fg="#1565C0", bg="#F5F5F5",
+        ).pack(side="left")
+
+        tk.Label(
+            self, text="Departamentos Exentos",
+            font=("Arial", 16, "bold"), bg="#F5F5F5", fg="#1A237E",
+        ).pack(pady=(4, 2))
+        tk.Label(
+            self,
+            text="Los departamentos marcados NO aportan la cuota base de $200.",
+            font=("Arial", 10), bg="#F5F5F5", fg="#555555",
+            wraplength=420,
+        ).pack(pady=(0, 8))
+
+        # Info dinámica
+        self.info_label = tk.Label(
+            self, text="", font=("Arial", 11, "bold"),
+            bg="#E8EAF6", fg="#1A237E", pady=6,
+        )
+        self.info_label.pack(fill="x", padx=24, pady=(0, 10))
+
+        # Grid de checkboxes (2 columnas)
+        chk_frame = tk.Frame(self, bg="#F5F5F5", padx=24)
+        chk_frame.pack(fill="x")
+
+        for i, depto in enumerate(self.DEPTOS):
+            var = tk.BooleanVar()
+            self._vars[depto] = var
+            cb = tk.Checkbutton(
+                chk_frame, text=depto, variable=var,
+                font=("Arial", 11), bg="#F5F5F5",
+                command=self._on_toggle,
+            )
+            col = i % 2
+            row = i // 2
+            cb.grid(row=row, column=col, sticky="w", padx=16, pady=3)
+
+        # Botones
+        btn_frame = tk.Frame(self, bg="#F5F5F5")
+        btn_frame.pack(pady=16)
+        tk.Button(
+            btn_frame, text="Guardar",
+            command=self._guardar,
+            font=("Arial", 12, "bold"),
+            bg="#1565C0", fg="white",
+            activebackground="#0D47A1", activeforeground="white",
+            width=14, cursor="hand2", relief="flat",
+        ).pack(side="left", padx=8)
+        tk.Button(
+            btn_frame, text="Cancelar",
+            command=lambda: self.controller.show_frame("MenuPrincipal"),
+            font=("Arial", 12, "bold"),
+            bg="#B0BEC5", fg="#333",
+            activebackground="#90A4AE",
+            width=14, cursor="hand2", relief="flat",
+        ).pack(side="left", padx=8)
+
+    def _on_toggle(self):
+        n_exentos = sum(v.get() for v in self._vars.values())
+        n_pagantes = 20 - n_exentos
+        base = CUOTA_BASE * n_pagantes
+        self.info_label.config(
+            text=f"{n_exentos} exento(s) · {n_pagantes} pagantes · "
+                 f"Fondo base: ${base:,.2f}  (÷{n_pagantes})"
+        )
+
+    def cargar_datos(self):
+        exentos = _cargar_exentos()
+        for depto, var in self._vars.items():
+            var.set(depto in exentos)
+        self._on_toggle()
+
+    def _guardar(self):
+        exentos = {d for d, v in self._vars.items() if v.get()}
+        _guardar_exentos(exentos)
+        n_exentos = len(exentos)
+        n_pagantes = 20 - n_exentos
+        messagebox.showinfo(
+            "Guardado",
+            f"Configuración guardada.\n"
+            f"{n_exentos} departamento(s) exento(s) — "
+            f"Fondo base: ${CUOTA_BASE * n_pagantes:,.2f}",
+        )
+        self.controller.show_frame("MenuPrincipal")
 
 
 # ---------------------------------------------------------------------------
