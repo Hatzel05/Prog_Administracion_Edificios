@@ -3198,8 +3198,11 @@ class SeguimientoGastos(tk.Frame):
                 self._refrescar_tabla()
                 return
 
-        # Sin datos para este mes → intentar importar desde gastos.json
+        # Sin datos en seguimiento → intentar importar desde gastos.json
         self._importar_desde_registro(silent=True)
+        # Garantizar que el título y la tabla reflejen el mes activo
+        self.subtitulo.config(text=mes_label)
+        self._refrescar_tabla()
 
     def _importar_desde_registro(self, silent=False):
         """Carga los gastos de la última sesión del mes desde gastos.json."""
